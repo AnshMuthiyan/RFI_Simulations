@@ -107,7 +107,7 @@ def bfsk(nbits,symbol_rate,f0,f1,Ebit=0.0,N0=None,fs=800e6):
 
 
 
-#binary freq-shift keying - switch between 2 freqs
+#binary freq-shift keying - switch between 2 freqs - fast version
 def bfsk_fast(nbits,symbol_rate,f0,f1,wincut,Ebit=0.0,N0=None,fs=800e6):
 
     tbit = int( fs / (symbol_rate*1e3) )

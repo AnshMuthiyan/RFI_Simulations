@@ -27,7 +27,7 @@ import sys
 import psutil
 
 import time
-import resource
+# import resource
 
 from multiprocessing import Process,Queue
 
@@ -206,10 +206,10 @@ def do_sims():
 				if (kk==0) and (ii==0) and (jj==0):
 					print('creating first large array...')
 					#x = np.arange(num_spectra*Nchan,dtype=np.uint32)
-					#x = np.tile(np.arange(ns_per_bit),num_bits)
-					#e_vec = np.exp(2.j*np.pi*fc_sig*x*ts)
-					x = np.load('/home/scratch/esmith/big_x60.npy')
-					e_vec = np.load('/home/scratch/esmith/big_evec60.npy')
+					x = np.tile(np.arange(ns_per_bit),num_bits)
+					e_vec = np.exp(2.j*np.pi*fc_sig*x*ts)
+					# x = np.load('/home/scratch/esmith/big_x60.npy')
+					# e_vec = np.load('/home/scratch/esmith/big_evec60.npy')
 					#fir_sz = int(0.2*ns_per_bit)
 					#sinc = scipy.signal.firwin(fir_sz, cutoff=1.0/fir_sz, window="rectangular")
 					#np.save('big_x60.npy',x)
@@ -385,8 +385,8 @@ def do_sims():
 				print('Flagged: {} || False pos: {}'.format(flg_pct,fpos_pct))
 				out_flag[ii,jj,kk] = flg_pct
 				out_fpos[ii,jj,kk] = fpos_pct
-				mem_gb = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)/1e6
-				print('mem usage: {} GB'.format(np.around(mem_gb,4)))
+				# mem_gb = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)/1e6
+				# print('mem usage: {} GB'.format(np.around(mem_gb,4)))
 
 
 		#if (kk==0) and os.path.exists(this_fname_f):
