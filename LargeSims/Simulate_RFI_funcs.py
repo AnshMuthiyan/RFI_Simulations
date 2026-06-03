@@ -236,10 +236,20 @@ def msk(nbits,symbol_rate,fc,Ebit=0.0,N0=None,fs=800e6):
 
 
 def bpsk_alt(x,e_vec,nbits,symbol_rate,wincut,fc,Ebit,fs=800e6):
+    """
+    nbits: number of bits to simulate
+    x = the time index length/array 
+    tbit = number of samples per symbol
+    e_vec = the carrier waveform
+    symbol_rate = symbol rate in ksps
+    wincut = idk (used in firwin for cutoff)
+    fc = carrier frequency
+    Ebit = idk (energy per bit?)
+    """
     #binary phase shift keyed
     tbit = int( fs / (symbol_rate*1e3) )
     #print('making index range...')
-    #x = np.arange(nbits*tbit)
+    x = np.arange(nbits*tbit)
     #print('making bit seq...')
     bit_seq = np.random.randint(0,2,size=(int(len(x)/tbit)+1,))
     bit_seq = (2*bit_seq)-1
@@ -254,7 +264,7 @@ def bpsk_alt(x,e_vec,nbits,symbol_rate,wincut,fc,Ebit,fs=800e6):
     #apply carrier signal
     ts = 1/fs
     #print('making carrier signal...')
-    #e_vec = np.exp(2.j*np.pi*fc*x*ts)
+    e_vec = np.exp(2.j*np.pi*fc*x*ts)
     #e_vec = np.exp(2.j*np.pi * fs/f_sim * x)
     #print('modulating...')
     
