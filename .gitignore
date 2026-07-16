@@ -1,0 +1,7 @@
+*.png
+*.gitignore
+RFI_Simulations/.gitignore
+/users/amuthiya/Sim-RFi/RFI_Simulations/.gitignore
+*.nc
+*.nbc
+*.nbi
