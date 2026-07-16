@@ -34,24 +34,25 @@ from ConvRFI  import  RFIconv,init_RFIconv
 #     print(f'PFB FIR frontend time: {end - start} seconds')
 #     return x_summed.T
 
-@njit(parallel=True, fastmath=True, cache=True)
-def pfb_fir_frontendp2(x_p, h_p, M, W, P):
-    T = M * W - M
-    x_summed = np.zeros((T, P), dtype=np.complex64)
-    for t in prange(T):
-        for p in prange(P):
-            acc = np.complex64(0.0)
-            for m in prange(M):
-                acc += x_p[p, t + m] * h_p[p, m]
-            x_summed[t, p] = acc
-    return x_summed
 
-def pfb_fir_frontend(x, win_coeffs, M, P):
-    W = int(x.shape[0] / M / P)
-    # ascontiguous array for better performance
-    x_p = np.ascontiguousarray(x.reshape((W * M, P)).T)
-    h_p = np.ascontiguousarray(win_coeffs.reshape((M, P)).T)
-    return pfb_fir_frontendp2(x_p, h_p, M, W, P)
+@njit(parallel=True, fastmath=True, cache=True)
+def _pfb_fir_kernel(x_p, h_p, M, W, P):
+    T   = M * W - M
+    out = np.zeros((T, P), dtype=np.complex64)
+    for t in prange(T):       # parallelised over time steps
+        for p in range(P):
+            acc = np.complex64(0.0)
+            for m in range(M):
+                acc += x_p[p, t + m] * h_p[p, m]
+            out[t, p] = acc
+    return out                      # already (T, P), no transpose needed
+
+def pfb_fir_numba(x, win_coeffs, M, P):
+    W   = int(x.shape[0] / M / P)
+    # ascontiguousarray ensures cache-friendly memory layout for Numba
+    x_p = np.ascontiguousarray(x.reshape(W * M, P).T)
+    h_p = np.ascontiguousarray(win_coeffs.reshape(M, P).T)
+    return _pfb_fir_kernel(x_p, h_p, M, W, P)
 
 def generate_win_coeffs(M, P, window_fn="hamming"):
     win_coeffs = scipy.signal.get_window(window_fn, M*P)
@@ -59,19 +60,10 @@ def generate_win_coeffs(M, P, window_fn="hamming"):
     win_coeffs *= sinc
     return win_coeffs
 
-# def pfb_filterbank(x, M, P, window_fn="hamming"):
-#     start = time.time()
-#     win_coeffs = generate_win_coeffs(M, P, window_fn=window_fn)
-#     x_fir = pfb_fir_frontend(x, win_coeffs, M, P)
-#     x_pfb = np.fft.fft(x_fir, axis=1)
-#     end = time.time()
-#     print(f'PFB filterbank time: {end - start} seconds')
-#     return x_pfb
-
 def pfb_filterbank(x, M, P, window_fn="hamming"):
     win_coeffs = generate_win_coeffs(M, P, window_fn=window_fn)
-    x_fir = pfb_fir_frontend(x, win_coeffs, M, P)
-    #scipy is supposedly faster, and this workers thing is supposed to force it use all the cores.
+    x_fir      = pfb_fir_numba(x, win_coeffs, M, P)
+    # workers=-1 uses all CPU cores for the FFT stage
     return scipy.fft.fft(x_fir, axis=1, workers=-1)
 
 
@@ -303,6 +295,67 @@ def power_mask(x,n,Nchan,SKM,Nsk,M,P):
     out_f[s_db > -10] = 1
     return out_f.T,s_db,sbig_db,out_bf
 
+def power_mask(x,n,Nchan,SKM,Nsk,M,P):
+    """x: signal
+    n: noise
+    Nchan: number of channels to simulate (for multi-channel RFI) - centered at fc
+    SKM: M of the SK
+    Nsk: number of SK blocks
+    M: number of taps for PFB
+    P: number of points for PFB
+    """
+    # print('making power mask')
+    out_f = np.zeros((Nsk,Nchan),dtype=np.int8)
+    out_bf = np.zeros((Nsk*SKM,Nchan),dtype=np.int8)
+
+    fb_shape = (Nsk*SKM,Nchan)
+    s_shape = (Nsk,Nchan)
+
+    
+    xfb = pfb_filterbank(x, M, P)
+    # print(xfb.shape)
+    # plt.imshow((np.abs(xfb)**2).T, aspect='auto', origin='lower')
+    # plt.title('PFB of signal')
+    # plt.xlabel('Time (SK blocks)')
+    # plt.ylabel('Frequency (channels)')
+    # plt.colorbar(label='Power (dB)')
+    # plt.show()
+    nfb = pfb_filterbank(n, M, P)
+
+    xs = np.zeros(fb_shape,dtype=np.complex64)
+    xs[:-M,:] = xfb
+    xs[-M:,:] = xfb[-1,:]
+    xss = np.abs(xs)**2
+    
+    ns = np.zeros(fb_shape,dtype=np.complex64)
+    ns[:-M,:] = nfb
+    ns[-M:,:] = nfb[-1,:]
+    nss = np.abs(ns)**2
+
+    x_ave = np.zeros(s_shape,dtype=np.float64)
+    n_ave = np.zeros(s_shape,dtype=np.float64)
+    s_db = np.zeros(s_shape,dtype=np.float64)
+    
+    sbig_db = np.zeros(fb_shape,dtype=np.float64)
+    
+    this_nbig_ave = np.mean(nss)
+    for i in range(Nsk*SKM):
+        sbig_db[i,:] = 10*np.log10((xss[i,:])/this_nbig_ave)
+        
+    out_bf[sbig_db > -10] = 1
+
+    for i in range(Nsk):
+        this_x = xss[SKM*i:SKM*(i+1),:]
+        this_n = nss[SKM*i:SKM*(i+1),:]
+        x_ave[i,:] = np.mean(this_x,axis=0)
+        n_ave[i,:] = np.mean(this_n,axis=0)
+        #print(10*np.log10((x_ave[i,:])/n_ave[i,:]))
+        s_db[i,:] = 10*np.log10((x_ave[i,:])/n_ave[i,:])
+
+
+    out_f[s_db > -10] = 1
+    return out_f.T,s_db,sbig_db,out_bf
+
 
 def mfrg(Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 100e6, f1 = 75e6, Ebit = 1.0, fs = 800e6, M = 512, wincut = 1.0, SNR = 1.0, DC = 100):
     """
@@ -326,6 +379,8 @@ def mfrg(Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 100
 
     #derived number of samples per symbol (this should go inside each rfi generator)
     tbit = int( fs / (symbol_rate*1e3) )
+    
+    nbits = np.ceil((1.*60*128*M)/tbit)
     # #index time array
     x = np.arange(nbits*tbit)   
     # print(sigarray.shape)
@@ -355,31 +410,38 @@ def mfrg(Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 100
 
     #duty cylcle
     time = np.arange(len(sig))
-    sig [time % 100 > int(DC)] = 0.0
+    sig [time % 1000 > 10*int(DC)] = 0.0
     
 
-    r = sig.shape[0] % (24*16*M)
-    if r != 0:
-        print(f"Warning: signal length {sig.shape[0]} is not a multiple of 24*16*{M}. Truncating to {sig.shape[0] - r}.")
-        sig = sig[:(sig.shape[0] - r)] 
-    # sig = sig[:(24*16*584)]
-    mult = int(sig.shape[0] / (24*16*M))
+    # r = sig.shape[0] % (24*16*M)
+    # if r != 0:
+    #     print(f"Warning: signal length {sig.shape[0]} is not a multiple of 24*16*{M}. Truncating to {sig.shape[0] - r}.")
+    #     sig = sig[:(sig.shape[0] - r)] 
+    
+    # mult = int(sig.shape[0] / (24*16*M))
+
+    sig = sig[:(128*M*60)]
 
     #generate noise
-    noise = np.random.normal(0, 1/SNR, size=len(sig))
+    # adc_amp = 16
+    n = np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8)
 
-    powerMask = power_mask(sig, noise, 128, SKM=M, Nsk=3*mult, M=24, P=128)
+    powerMask = power_mask(sig, n, 128, SKM=M, Nsk=60, M=24, P=128)
 
-    sig += noise
+    sig += n
     # print(f'Generated base signal with shape {sig.shape}')
     
 
     pfb_sig = pfb_filterbank(sig, 24, 128)
+    signal = np.zeros((M*60, 128), dtype=np.complex64)
+    signal[:-24,:] = pfb_sig
+    signal[-24:,:] = pfb_sig[-1,:]
+    # pfb_sig = pfb_sig[:(60*M),:]
 
     # sigDFT = np.fft.fft(pfb_sig, axis=0)
 
-    return pfb_sig, powerMask
-    
+    return signal, powerMask
+     
 def SKest (data, N =1 , d =1, m=256):
     """
     data: 2d Array (nchans, nsamples)
@@ -445,33 +507,33 @@ def conv_det(data, agg_factor = [5,5,3,5]):
 
   return data_test_ma 
 
-import aoflagger
+# import aoflagger
 
-def aoflaggerMit(signal, count=50):
-    nch = signal.shape[0]
-    ntimes = signal.shape[1]
+# def aoflaggerMit(signal, count=50):
+#     nch = signal.shape[0]
+#     ntimes = signal.shape[1]
 
-    flagger = aoflagger.AOFlagger()
-    path = flagger.find_strategy_file(aoflagger.TelescopeId.Generic)
-    strategy = flagger.load_strategy_file(path)
-    data = flagger.make_image_set(ntimes, nch, 8)
+#     flagger = aoflagger.AOFlagger()
+#     path = flagger.find_strategy_file(aoflagger.TelescopeId.Generic)
+#     strategy = flagger.load_strategy_file(path)
+#     data = flagger.make_image_set(ntimes, nch, 8)
 
-    ratiosum = 0.0
-    ratiosumsq = 0.0
-    for repeat in range(count):
-        for imgindex in range(8):
+#     ratiosum = 0.0
+#     ratiosumsq = 0.0
+#     for repeat in range(count):
+#         for imgindex in range(8):
 
-            data.set_image_buffer(imgindex, signal.astype(np.float32))
+#             data.set_image_buffer(imgindex, signal.astype(np.float32))
 
-        flags = strategy.run(data)
-        flagvalues = flags.get_buffer()
-        ratio = float(sum(sum(flagvalues))) / (nch*ntimes)
-        ratiosum += ratio
-        ratiosumsq += ratio*ratio
+#         flags = strategy.run(data)
+#         flagvalues = flags.get_buffer()
+#         ratio = float(sum(sum(flagvalues))) / (nch*ntimes)
+#         ratiosum += ratio
+#         ratiosumsq += ratio*ratio
     
-    mitigated = signal.copy()
-    mitigated[flagvalues==1] = 0.0
-    return mitigated
+#     mitigated = signal.copy()
+#     mitigated[flagvalues==1] = 0.0
+#     return mitigated
 
 def  SK_thresholds (m, n=1, d=1, p = 0.00013499):
     """
@@ -482,7 +544,7 @@ def  SK_thresholds (m, n=1, d=1, p = 0.00013499):
 
     returns: lower and upper SK thresholds for given parameters
     """
-    x = np.random.normal(0, 1, size=m*4800) + 1j*np.random.normal(0, 1, size=m*4800)
+    x = np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8)
     xpfb = pfb_filterbank(x, 24, m)
     xdft = np.fft.fft(xpfb, axis=0)
     xdft = xdft.T
@@ -512,7 +574,7 @@ def ms_SK_thresholds (m, n=1, d=1, p = 0.00013499):
     d: shape factor (default 1)
     p: desired probability of false alarm (default 0.00013499 for 5 sigma)
     """
-    x = np.random.normal(0, 1, size=m*4800) + 1j*np.random.normal(0, 1, size=m*4800)
+    x = np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8)
     xpfb = pfb_filterbank(x, 24, m)
     xdft = np.fft.fft(xpfb, axis=0)
     xdft = xdft.T
@@ -560,11 +622,9 @@ def sigGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 
     
     return Sig,Sig_lin,Sig_db, powerMask
 
-def SKmitigate (Signal, lower, upper, n=1, d=1, m=256):
+def SKmitigate (Signal, n=1, d=1, m=256):
     """
     Signal: 2D array of shape (nchans, nsamples) containing the signal to mitigate
-    lower: lower threshold for SK
-    upper: upper threshold for SK
     n: number of averaged channels
     d: shape factor (default 1)
     m: size of time bins to average over for SK estimation
@@ -572,23 +632,29 @@ def SKmitigate (Signal, lower, upper, n=1, d=1, m=256):
     Returns: a 2D array of the same shape as Signal with RFI mitigated using spectral kurtosis
     """
         #make sure M is compatible with the temporal length of the data
-
+    time = Signal.shape[1]
+    if time % m != 0:
+                
+        print(f'M (time bin size) must be a factor of the number of time samples. Got M={m} and time samples={time}.')
+        if m > time:
+            raise ValueError('M is larger than the number of time samples. Thats not enough samples')
+        Signal = Signal[:,:-(time % m)]
+        print(f'Adjusting signal length to {Signal.shape[1]} for compatibility.')
     # print(f'M: {m}')
-    SKvals = SKest(Signal, N=n, d=d, m=m)
     
+    SKvals = SKest(Signal, N=n, d=d, m=m)
+    lower, upper = SK_thresholds(m, n, d)
     mask = np.kron(SKvals, np.ones(m))
     mitigated = Signal.copy()
     mitigated[(mask < lower)|(mask > upper)] = 0
 
     return mitigated
 
-def ms_SKmitigate (Signal, lower, upper, n=1, d=1, m=256):
+def ms_SKmitigate (Signal, n=1, d=1, m=256):
     """
     Multi-scale spectral kurtosis mitigation. Applies SK mitigation at multiple time scales and combines masks.
 
     Signal: 2D array of shape (nchans, nsamples) containing the signal to mitigate
-    lower: lower threshold for ms-SK
-    upper: upper threshold for ms-SK
     n: number of averaged channels for ms-SK (default 1)
     d: shape factor (default 1)
     m: size of time bins to average over for SK estimation
@@ -624,6 +690,10 @@ def ms_SKmitigate (Signal, lower, upper, n=1, d=1, m=256):
     #output 2D array of shape (nchans, bins) containing SK values for each bin 
     mask = np.kron(SKarr, np.ones(m))
     mask = np.repeat(mask, n, axis=0)[:Signal.shape[0], :Signal.shape[1]]
+    lower, upper = ms_SK_thresholds(m, n, d)
+    # lower += -3
+    # upper += -3
+    # print(f'ms-SK thresholds: lower={lower}, upper={upper}')
     mitigated[(mask < lower)|(mask > upper)] = 0
 
 
@@ -696,12 +766,14 @@ def VoltGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 =
 
     #derived number of samples per symbol (this should go inside each rfi generator)
     tbit = int( fs / (symbol_rate*1e3) )
+    
+    nbits = np.ceil((1.*60*128*4096)/tbit)
     # #index time array
     x = np.arange(nbits*tbit)   
     # print(sigarray.shape)
     
     # pulse = np.ones(tbit)
-
+    
     if Rmethod == 'ask':
         sig = ask_mod(0, np.array([]), nbits, 0, wincut, symbol_rate, fc, Ebit, None, fs, biases)[0]
 
@@ -735,31 +807,35 @@ def VoltToSig (sig, SNR =1 , DC = 100, M =512):
 
     Returns: a 2D array of shape (nchans, nsamples) containing a simulated RFI signal for each channel using the chosen method
     """
-    #duty cylcle
-    times = np.arange(len(sig))
-    sig [times % 100 > int(DC)] = 0.0
+    time = np.arange(len(sig))
+    sig [time % 1000 > 10*int(DC)] = 0.0
     
 
-    r = sig.shape[0] % (24*16*M)
-    if r != 0:
-        print(f"Warning: signal length {sig.shape[0]} is not a multiple of 24*16*{M}. Truncating to {sig.shape[0] - r}.")
-        sig = sig[:(sig.shape[0] - r)] 
-    # sig = sig[:(24*16*584)]
-    mult = int(sig.shape[0] / (24*16*M))
+    # r = sig.shape[0] % (24*16*M)
+    # if r != 0:
+    #     print(f"Warning: signal length {sig.shape[0]} is not a multiple of 24*16*{M}. Truncating to {sig.shape[0] - r}.")
+    #     sig = sig[:(sig.shape[0] - r)] 
+    
+    # mult = int(sig.shape[0] / (24*16*M))
+
+    sig = sig[:(128*M*60)]
 
     #generate noise
-    noise = np.random.normal(0, 1/SNR, size=len(sig))
-    
-    # start_time = time.time()
-    powerMask = power_mask(sig, noise, 128, SKM=M, Nsk=3*mult, M=24, P=128)
-    # end_time = time.time()
-    # print(f'Power mask generation time: {end_time - start_time} seconds')
-    sig += noise
+    n = np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8)
+
+    powerMask = power_mask(sig, n, 128, SKM=M, Nsk=60, M=24, P=128)
+
+    sig += n
     # print(f'Generated base signal with shape {sig.shape}')
     
+
     pfb_sig = pfb_filterbank(sig, 24, 128)
-    # sigDFT = np.fft.fft(pfb_sig, axis=0)
-    Sig = pfb_sig.T
+    signal = np.zeros((M*60, 128), dtype=np.complex64)
+    signal[:-24,:] = pfb_sig
+    signal[-24:,:] = pfb_sig[-1,:]
+
+
+    Sig = signal.T
 
     #pseudo decibel conversion
     Sig_lin = np.abs(Sig)**2
@@ -768,14 +844,35 @@ def VoltToSig (sig, SNR =1 , DC = 100, M =512):
     return Sig,Sig_lin,Sig_db, powerMask
 
 ###Calcing all SK and ms-SK thresholds for all M and N values
-Ms = np.power(2, np.arange(7, 13))
-msSKThresh = np.empty((6,4,2))
-for i, m in enumerate(Ms):
-    for j, n in enumerate([1,2,4,8]):
-        lower, upper = ms_SK_thresholds(m, n=n, d=1)
-        msSKThresh[i,j,0] = lower
-        msSKThresh[i,j,1] = upper
+# Ms = np.power(2, np.arange(7, 13))
+# msSKThresh = np.empty((6,4,2))
+# for i, m in enumerate(Ms):
+#     for j, n in enumerate([1,2,4,8]):
+#         lower, upper = ms_SK_thresholds(m, n=n, d=1)
+#         msSKThresh[i,j,0] = lower
+#         msSKThresh[i,j,1] = upper
     
+### BPSK FOR SK
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), 6, len(SNR), len(DC), 4), np.nan)
+CoordsDict = {
+    # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
+    'M': np.power(2, np.arange(7, 13)),
+    # 'N': np.arange(1, 6),
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+}
+SKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
 ### BPSK FOR msSK
 emptyData = np.full((6, 4, 5, 3, 6,4,6, 4), np.nan)
@@ -863,7 +960,7 @@ try:
             #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
             #     continue
                 try:
-                    RawVolt = VoltGen('bpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+256)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
+                    RawVolt = VoltGen('bpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
                 except Exception as e:
                     print(f'Error generating voltage signal for SymbolRate={SymRt[sr]}, fc={FC[fc]}, FS={FS[fs]}: {e}')
                     continue
@@ -875,6 +972,9 @@ try:
                         for m in range(7, 13):
                             
                             Sig, Sig_lin, Sig_db, powerMask = VoltToSig(RawVolt, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
+                            # Sig, Sig_lin, Sig_db, powerMask = sigGen('bpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
                             # except Exception as e:
                             #     print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
                             #     continue
@@ -891,7 +991,14 @@ try:
                             Sig_db = Sig_db[:,:Sig.shape[1]]
                             powerMask = list(powerMask)
                             powerMask[3] = powerMask[3][:Sig.shape[1],:]
-                            # SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                            
+                            SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                            try: 
+                                SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                            except Exception as e:
+                                print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                continue
+                            SKds[sr,fc,fs,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP]
 
                             # adjust the Signal length to be compatible with the m 
                             # Sig = Sig[:,:SKmit.shape[1]]
@@ -903,8 +1010,8 @@ try:
                             
                             
                             for n_val in range(3):
-                                lower, upper = msSKThresh[m-7,n_val,:]
-                                ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, lower=lower, upper=upper, n=n[n_val], d=1, m=2**m)
+                                # lower, upper = msSKThresh[m-7,n_val,:]
+                                ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m)
                                 try:
                                     msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
                                 except Exception as e:
@@ -916,35 +1023,35 @@ try:
                                 continue
                             print("I am doing convRFI and AOFlagger now: m = ", m)
 
-                            for A1i, A1 in enumerate(Agfac1):
-                                for A2i, A2 in enumerate(Agfac2):
-                                    for A3i, A3 in enumerate(Agfac3):
-                                        for A4i, A4 in enumerate(Agfac4):
-                                            for bi, b in enumerate(bins):
-                                                try:
-                                                    ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
-                                                except Exception as e:
-                                                    print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                                                    continue
-                                                try:
-                                                    Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
-                                                except Exception as e:
-                                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                                                    continue
-                                                ConvRFIds[sr,fc,fs,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP] 
+                            # for A1i, A1 in enumerate(Agfac1):
+                            #     for A2i, A2 in enumerate(Agfac2):
+                            #         for A3i, A3 in enumerate(Agfac3):
+                            #             for A4i, A4 in enumerate(Agfac4):
+                            #                 for bi, b in enumerate(bins):
+                            #                     try:
+                            #                         ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
+                            #                     except Exception as e:
+                            #                         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #                         continue
+                            #                     try:
+                            #                         Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                            #                     except Exception as e:
+                            #                         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #                         continue
+                            #                     ConvRFIds[sr,fc,fs,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP] 
                                 
-                            for ci, c in enumerate(Count):
-                                try:
-                                    AoMit = aoflaggerMit(Sig_lin, count=c)
-                                except Exception as e:
-                                    print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                                    continue
-                                try:
-                                    Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
-                                except Exception as e:
-                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                                    continue
-                                AOFlaggerds[sr,fc,fs,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP]
+                            # for ci, c in enumerate(Count):
+                            #     try:
+                            #         AoMit = aoflaggerMit(Sig_lin, count=c)
+                            #     except Exception as e:
+                            #         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #         continue
+                            #     try:
+                            #         Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                            #     except Exception as e:
+                            #         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #         continue
+                            #     AOFlaggerds[sr,fc,fs,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP]
                             
 
                         # try:
@@ -958,12 +1065,12 @@ try:
     
                 print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
                 msSKds.to_netcdf(f'BPSK_msSK_{sr}_{fc}_{fs}.nc')
-                ConvRFIds.to_netcdf(f'BPSK_ConvRFI_{sr}_{fc}_{fs}.nc')
-                AOFlaggerds.to_netcdf(f'BPSK_AOFlagger_{sr}_{fc}_{fs}.nc')
+                # ConvRFIds.to_netcdf(f'BPSK_ConvRFI_{sr}_{fc}_{fs}.nc')
+                # AOFlaggerds.to_netcdf(f'BPSK_AOFlagger_{sr}_{fc}_{fs}.nc')
                     
     msSKds.to_netcdf('BPSK_msSK_full.nc')
-    ConvRFIds.to_netcdf('BPSK_ConvRFI_full.nc')
-    AOFlaggerds.to_netcdf('BPSK_AOFlagger_full.nc')
+    # ConvRFIds.to_netcdf('BPSK_ConvRFI_full.nc')
+    # AOFlaggerds.to_netcdf('BPSK_AOFlagger_full.nc')
     
 except Exception as e:
     print(f'Error in main loop: {e}')
