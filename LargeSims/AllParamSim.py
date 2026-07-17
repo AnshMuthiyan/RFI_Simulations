@@ -457,8 +457,8 @@ def SKest (data, N =1 , d =1, m=256):
 
     for i in range(bins):
         
-        S1 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**2, axis=1)
-        S2 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**4, axis=1)
+        S1 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**1, axis=1)
+        S2 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**2, axis=1)
         SK = (m*N*d+1)/(m-1) * (m*S2/S1**2 - 1)
         SKarr[:, i] = SK
 
@@ -473,14 +473,14 @@ def ms_SKest (data, n =1 , d =1, m=256):
 
     for i in range(Tbins):
         
-        S1 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**2, axis=1)
-        S2 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**4, axis=1)
+        S1 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**1, axis=1)
+        S2 = np.sum(np.abs(data[:,(i*m):(i+1)*m])**2, axis=1)
 
         for j in range(Cbins):
             S12 = np.sum(S1[j*n:(j+1)*n])
             S22 = np.sum(S2[j*n:(j+1)*n])
 
-            SK = (m*n*d+1)/(m-1) * (m*S22/S12**2 - 1)
+            SK = (m*n*d+1)/(m*n-1) * (m*n*S22/S12**2 - 1)
             SKarr[j, i] = SK
     return SKarr   
 
@@ -545,9 +545,9 @@ def  SK_thresholds (m, n=1, d=1, p = 0.00013499):
     returns: lower and upper SK thresholds for given parameters
     """
     x = np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8)
-    xpfb = pfb_filterbank(x, 24, m)
-    xdft = np.fft.fft(xpfb, axis=0)
-    xdft = xdft.T
+    xpfb = pfb_filterbank(x, 24, 128)
+    # xdft = np.fft.fft(xpfb, axis=0)
+    xdft = xpfb.T
     SKx = SKest(np.abs(xdft)**2, N=n, d=d,m=m)
     # print(SKx.shape)
     # skew = np.mean(SKx)*m / ((m-1)*(m-2)*np.std(SKx)**3)
@@ -575,9 +575,9 @@ def ms_SK_thresholds (m, n=1, d=1, p = 0.00013499):
     p: desired probability of false alarm (default 0.00013499 for 5 sigma)
     """
     x = np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=m*4800).astype(np.int8)
-    xpfb = pfb_filterbank(x, 24, m)
-    xdft = np.fft.fft(xpfb, axis=0)
-    xdft = xdft.T
+    xpfb = pfb_filterbank(x, 24, 128)
+    # xdft = np.fft.fft(xpfb, axis=0)
+    xdft = xpfb.T
     SKx = ms_SKest(np.abs(xdft)**2, n=n, d=d,m=m)
     # print(SKx.shape)
     # skew = np.mean(SKx)*m / ((m-1)*(m-2)*np.std(SKx)**3)
@@ -585,10 +585,10 @@ def ms_SK_thresholds (m, n=1, d=1, p = 0.00013499):
     realX = SKx.real 
     realX = realX.reshape(-1)
     # print(realX.shape)
-    imagX= SKx.imag[:, 0]
+    # imagX= SKx.imag[:, 0]
 
     skewR, locR, scaleR = scipy.stats.pearson3.fit(realX)
-    skewI, locI, scaleI = scipy.stats.pearson3.fit(imagX)
+    # skewI, locI, scaleI = scipy.stats.pearson3.fit(imagX)
 
     lower_threshR = scipy.stats.pearson3.ppf(p, skewR, locR, scaleR)
     upper_threshR = scipy.stats.pearson3.ppf(1 - p, skewR, locR, scaleR)
@@ -746,10 +746,10 @@ def errorCalculator(powermask, mitigated):
     # print (f'Precision: {np.log10(TP/(FP))+TP}, Accuracy Score: {TP/FP}')
     return TP,FP,np.log10(TP/(FP))+TP,TP/FP
 
-def VoltGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 100e6, f1 = 75e6, Ebit = 1.0, fs = 800e6, wincut = 39):
+def VoltGen(Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 = 100e6, f1 = 75e6, Ebit = 1.0, fs = 800e6, wincut = 0.15):
     """
     Parameters:
-    Rmethod: the modulation method to use (e.g. 'ask', 'bpsk', etc.)
+    Rmethod: modulation method to use (e.g. 'ask', 'bpsk', etc.)
     nbits: number of bits to simulate
     symbol_rate: symbol rate in ksps
     fc: center carrier frequency
@@ -761,6 +761,8 @@ def VoltGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 =
     wincut: window cut-off frequency
     SNR: signal-to-noise ratio
     DC: duty cycle (percentage of time the signal is on)
+
+    Returns: a 2D array of shape (nchans, nbits*tbit) containing a simulated RFI signal for each channel using the chosen method
     """
     Rmethod = Rmethod.lower().strip()
 
@@ -773,7 +775,7 @@ def VoltGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 =
     # print(sigarray.shape)
     
     # pulse = np.ones(tbit)
-    
+
     if Rmethod == 'ask':
         sig = ask_mod(0, np.array([]), nbits, 0, wincut, symbol_rate, fc, Ebit, None, fs, biases)[0]
 
@@ -793,22 +795,29 @@ def VoltGen (Rmethod, nbits, symbol_rate, fc, biases = np.array([0.5,1.0]), f0 =
         raise ValueError('Invalid Rmethod. Must be one of: ask, bpsk, qpsk, bfsk')
     
     #ramp up
+
+    return sig 
+
+def DuCyc (sig, DC = 100):
+    #duty cylcle
+    duty = np.ones(500)
+
+    duty[int(DC*5):] = 0
+    duty = np.tile(duty, len(sig)//500 + 1)[:len(sig)] 
+    return sig * duty
+
+def VolttoSig(Volt, Noise, DC = 100, M = 512, SNR= 1.0):
+    sig = Volt.copy()
+    sig = sig[:(128*M*60)]
+
+    n = Noise.copy()
+    n = n[:(128*M*60)]
+    
     sig *= (np.arange(len(sig)))/(len(sig))
-        
-    return sig
 
-def VoltToSig (sig, SNR =1 , DC = 100, M =512):
-    """
-    Parameters:
-    sig: 1D array of voltages to convert to a signal
-    SNR: signal-to-noise ratio
-    DC: duty cycle (percentage of time the signal is on)
-    M: number of taps for PFB
-
-    Returns: a 2D array of shape (nchans, nsamples) containing a simulated RFI signal for each channel using the chosen method
-    """
-    time = np.arange(len(sig))
-    sig [time % 1000 > 10*int(DC)] = 0.0
+    # #duty cylcle
+    # time = np.arange(len(sig))
+    # sig [time % 1000 > 10*int(DC)] = 0.0
     
 
     # r = sig.shape[0] % (24*16*M)
@@ -818,10 +827,9 @@ def VoltToSig (sig, SNR =1 , DC = 100, M =512):
     
     # mult = int(sig.shape[0] / (24*16*M))
 
-    sig = sig[:(128*M*60)]
 
     #generate noise
-    n = np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1,size=len(sig)).astype(np.int8)
+    # adc_amp = 16
 
     powerMask = power_mask(sig, n, 128, SKM=M, Nsk=60, M=24, P=128)
 
@@ -833,14 +841,16 @@ def VoltToSig (sig, SNR =1 , DC = 100, M =512):
     signal = np.zeros((M*60, 128), dtype=np.complex64)
     signal[:-24,:] = pfb_sig
     signal[-24:,:] = pfb_sig[-1,:]
+    # pfb_sig = pfb_sig[:(60*M),:]
 
+    # sigDFT = np.fft.fft(pfb_sig, axis=0)
 
     Sig = signal.T
 
     #pseudo decibel conversion
     Sig_lin = np.abs(Sig)**2
     Sig_db = 10*np.log10(Sig_lin)    
-
+    
     return Sig,Sig_lin,Sig_db, powerMask
 
 ###Calcing all SK and ms-SK thresholds for all M and N values
@@ -858,7 +868,7 @@ FC = [0,1/8,1/4,1/2]
 FS = [100,300,500,650,800]
 SNR = [0.5, 1, 2, 4]
 DC = [15,30,50,60,75,100]
-emptyData = np.full((len(SymRt), len(FC), len(FS), 6, len(SNR), len(DC), 4), np.nan)
+emptyData = np.full((len(SymRt), len(FC), len(FS), 6, len(SNR), len(DC), 5), np.nan)
 CoordsDict = {
     # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
     'SymbolRate': SymRt,
@@ -870,12 +880,12 @@ CoordsDict = {
     # 'N': np.arange(1, 6),
     'SNR': SNR,
     'DC': DC,
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
 SKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
 ### BPSK FOR msSK
-emptyData = np.full((6, 4, 5, 3, 6,4,6, 4), np.nan)
+emptyData = np.full((6, 4, 5, 3, 6,4,6, 5), np.nan)
 SymRt = [1, 4,20,50,100,200]
 FC = [0,1/8,1/4,1/2]
 FS = [100,300,500,650,800]
@@ -896,7 +906,7 @@ CoordsDict = {
     'SNR': SNR,
     'DC': DC,
     
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
 msSKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
@@ -911,7 +921,7 @@ Agfac4 = [0.00, 0.45, 1.66, 3.00]
 bins = [26, 80, 128, 160]
 SNR = [0.5, 1, 2, 4]
 DC = [15,30,50,60,75,100]
-emptyData = np.full((len(SymRt), len(FC), len(FS), len(Agfac1), len(Agfac2), len(Agfac3), len(Agfac4), len(bins), len(SNR), len(DC), 4), np.nan)
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Agfac1), len(Agfac2), len(Agfac3), len(Agfac4), len(bins), len(SNR), len(DC), 5), np.nan)
 
 CoordsDict = {
     'SymbolRate': SymRt,
@@ -924,7 +934,7 @@ CoordsDict = {
     'Bins': bins,
     'SNR': SNR,
     'DC': DC,
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
 ConvRFIds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
 
@@ -935,7 +945,7 @@ FS = [100,300,500,650,800]
 Count = [1, 5]
 SNR = [0.5, 1, 2, 4]
 DC = [15,30,50,60,75,100]
-emptyData = np.full((len(SymRt), len(FC), len(FS), len(Count), len(SNR), len(DC), 4), np.nan)
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Count), len(SNR), len(DC), 5), np.nan)
 
 CoordsDict = {
     'SymbolRate': SymRt,
@@ -944,11 +954,11 @@ CoordsDict = {
     'Count': Count,
     'SNR': SNR,
     'DC': DC,
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
 AOFlaggerds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
 
-### BPSK FOR msSK/ConvRFI
+### BPSK
 try:
     for sr in range(6):
         
@@ -968,10 +978,12 @@ try:
                     #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
                     #     continue
                 for snr in range(4):
+                    noise = np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8)
                     for dc in range(6):
+                        DuVolt = DuCyc(RawVolt, DC=DC[dc])
                         for m in range(7, 13):
-                            
-                            Sig, Sig_lin, Sig_db, powerMask = VoltToSig(RawVolt, M=2**m, SNR=SNR[snr], DC=DC[dc])
+                            print(f'Processing: SymbolRate={SymRt[sr]} ksps, fc={(FC[fc]*(FS[fs]/128)+120)*1e6} Hz, FS={FS[fs]*1e6} Hz, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                            Sig, Sig_lin, Sig_db, powerMask = VolttoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
 
                             # Sig, Sig_lin, Sig_db, powerMask = sigGen('bpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
 
@@ -991,14 +1003,17 @@ try:
                             Sig_db = Sig_db[:,:Sig.shape[1]]
                             powerMask = list(powerMask)
                             powerMask[3] = powerMask[3][:Sig.shape[1],:]
-                            
+                            start = time.time()
                             SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                            
+                            end = time.time()
+                            SK_time = end - start
                             try: 
                                 SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
                             except Exception as e:
                                 print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
                                 continue
-                            SKds[sr,fc,fs,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP]
+                            SKds[sr,fc,fs,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP, SK_time]
 
                             # adjust the Signal length to be compatible with the m 
                             # Sig = Sig[:,:SKmit.shape[1]]
@@ -1011,47 +1026,58 @@ try:
                             
                             for n_val in range(3):
                                 # lower, upper = msSKThresh[m-7,n_val,:]
+                                start = time.time()
                                 ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m)
+                                end = time.time()
+                                msSK_time = end - start
                                 try:
                                     msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
                                 except Exception as e:
                                     print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
                                     continue
-                                msSKds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP]
+                                msSKds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
 
                             if m != 7:
                                 continue
                             print("I am doing convRFI and AOFlagger now: m = ", m)
 
-                            # for A1i, A1 in enumerate(Agfac1):
-                            #     for A2i, A2 in enumerate(Agfac2):
-                            #         for A3i, A3 in enumerate(Agfac3):
-                            #             for A4i, A4 in enumerate(Agfac4):
-                            #                 for bi, b in enumerate(bins):
-                            #                     try:
-                            #                         ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
-                            #                     except Exception as e:
-                            #                         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                            #                         continue
-                            #                     try:
-                            #                         Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
-                            #                     except Exception as e:
-                            #                         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                            #                         continue
-                            #                     ConvRFIds[sr,fc,fs,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP] 
+                            for A1i, A1 in enumerate(Agfac1):
+                                for A2i, A2 in enumerate(Agfac2):
+                                    for A3i, A3 in enumerate(Agfac3):
+                                        for A4i, A4 in enumerate(Agfac4):
+                                            for bi, b in enumerate(bins):
+                                                try:
+                                                    start = time.time()
+                                                    ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
+                                                    end = time.time()
+                                                    Conv_time = end - start
+                                                except Exception as e:
+                                                    print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                    continue
+                                                try:
+                                                    Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                                                except Exception as e:
+                                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                    continue
+                                                ConvRFIds[sr,fc,fs,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP, Conv_time] 
                                 
-                            # for ci, c in enumerate(Count):
-                            #     try:
-                            #         AoMit = aoflaggerMit(Sig_lin, count=c)
-                            #     except Exception as e:
-                            #         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                            #         continue
-                            #     try:
-                            #         Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
-                            #     except Exception as e:
-                            #         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
-                            #         continue
-                            #     AOFlaggerds[sr,fc,fs,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP]
+                            for ci, c in enumerate(Count):
+                                try:
+                                    start = time.time()
+                                    # AoMit = aoflaggerMit(Sig_lin, count=c)
+                                    
+                                    end = time.time()
+                                    AO_time = end - start
+                                except Exception as e:
+                                    print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                    continue
+                                try:
+                                    # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                                    pass
+                                except Exception as e:
+                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                    continue
+                                # AOFlaggerds[sr,fc,fs,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP, AO_time]
                             
 
                         # try:
@@ -1064,23 +1090,48 @@ try:
                         # msSKds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP]
     
                 print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                SKds.to_netcdf(f'BPSK_SK_{sr}_{fc}_{fs}.nc')
                 msSKds.to_netcdf(f'BPSK_msSK_{sr}_{fc}_{fs}.nc')
-                # ConvRFIds.to_netcdf(f'BPSK_ConvRFI_{sr}_{fc}_{fs}.nc')
-                # AOFlaggerds.to_netcdf(f'BPSK_AOFlagger_{sr}_{fc}_{fs}.nc')
-                    
+                ConvRFIds.to_netcdf(f'BPSK_ConvRFI_{sr}_{fc}_{fs}.nc')
+                AOFlaggerds.to_netcdf(f'BPSK_AOFlagger_{sr}_{fc}_{fs}.nc')
+    SKds.to_netcdf('BPSK_SK_full.nc')           
     msSKds.to_netcdf('BPSK_msSK_full.nc')
-    # ConvRFIds.to_netcdf('BPSK_ConvRFI_full.nc')
-    # AOFlaggerds.to_netcdf('BPSK_AOFlagger_full.nc')
+    ConvRFIds.to_netcdf('BPSK_ConvRFI_full.nc')
+    AOFlaggerds.to_netcdf('BPSK_AOFlagger_full.nc')
     
 except Exception as e:
     print(f'Error in main loop: {e}')
+    SKds.to_netcdf('BPSK_SK_partial.nc')
     msSKds.to_netcdf('BPSK_msSK_partial.nc')
     ConvRFIds.to_netcdf('BPSK_ConvRFI_partial.nc')
     AOFlaggerds.to_netcdf('BPSK_AOFlagger_partial.nc')
 
 
-### QPSK FOR msSK
+    
+### QPSK FOR SK
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), 6, len(SNR), len(DC), 5), np.nan)
+CoordsDict = {
+    # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
+    'M': np.power(2, np.arange(7, 13)),
+    # 'N': np.arange(1, 6),
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+SKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
+### QPSK FOR msSK
+emptyData = np.full((6, 4, 5, 3, 6,4,6, 5), np.nan)
 SymRt = [1, 4,20,50,100,200]
 FC = [0,1/8,1/4,1/2]
 FS = [100,300,500,650,800]
@@ -1094,22 +1145,66 @@ CoordsDict = {
     'FC': FC,
     'FS': FS,
     # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
     'n': n,
     'M': np.power(2, np.arange(7, 13)),
     # 'N': np.arange(1, 6),
     'SNR': SNR,
     'DC': DC,
     
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
+msSKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
-emptyData = np.full((len(SymRt), len(FC), len(FS), len(n), len(np.power(2, np.arange(7, 13))), len(SNR), len(DC), len(['precision', 'accuracy', 'TP', 'FP'])), np.nan)
+###QPSK for ConvRFI
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+Agfac1 = [0.00, 0.45, 1.66, 3.00]
+Agfac2 = [0.00, 0.45, 1.66, 3.00]
+Agfac3 = [0.00, 0.45, 1.66, 3.00]
+Agfac4 = [0.00, 0.45, 1.66, 3.00]
+bins = [26, 80, 128, 160]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Agfac1), len(Agfac2), len(Agfac3), len(Agfac4), len(bins), len(SNR), len(DC), 5), np.nan)
 
-print("Starting QPSK for msSK")
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    'AggressionFactor1': Agfac1,
+    'AggressionFactor2': Agfac2,
+    'AggressionFactor3': Agfac3,
+    'AggressionFactor4': Agfac4,
+    'Bins': bins,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+ConvRFIds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
 
-ds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=['SymbolRate', 'FC', 'FS','n', 'M', 'SNR', 'DC', 'Metrics'])
-### QPSK FOR msSK
-#counter to keep track of the metric index for each method
+###QPSK for AOFlagger
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+Count = [1, 5]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Count), len(SNR), len(DC), 5), np.nan)
+
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    'Count': Count,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+AOFlaggerds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
+
+### QPSK
 try:
     for sr in range(6):
         
@@ -1121,61 +1216,171 @@ try:
             #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
             #     continue
                 try:
-                    RawVolt = VoltGen('qpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+256)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
+                    RawVolt = VoltGen('qpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
                 except Exception as e:
                     print(f'Error generating voltage signal for SymbolRate={SymRt[sr]}, fc={FC[fc]}, FS={FS[fs]}: {e}')
                     continue
-                for n_val in range(3):
-                    for m in range(7,13):
-                        # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
-                            #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
+                # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
+                    #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
+                    #     continue
+                for snr in range(4):
+                    noise = np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8)
+                    for dc in range(6):
+                        DuVolt = DuCyc(RawVolt, DC=DC[dc])
+                        for m in range(7, 13):
+                            print(f'Processing: SymbolRate={SymRt[sr]} ksps, fc={(FC[fc]*(FS[fs]/128)+120)*1e6} Hz, FS={FS[fs]*1e6} Hz, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                            Sig, Sig_lin, Sig_db, powerMask = VolttoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
+                            # Sig, Sig_lin, Sig_db, powerMask = sigGen('qpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
+                            # except Exception as e:
+                            #     print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
                             #     continue
-                        for snr in range(4):
-                            for dc in range(6):
+
+                            #Adjusting Signal length to be compatible with the m value
+                            times = Sig.shape[1]
+                            if times % (2**m) != 0:                                            
+                                print(f'M (time bin size) must be a factor of the number of time samples. Got M={2**m} and time samples={times}.')
+                                if 2**m > times:
+                                    raise ValueError('M is larger than the number of time samples. Thats not enough samples')
+                                Sig = Sig[:,:-(times % (2**m))]
+                                print(f'Adjusting signal length to {Sig.shape[1]} for compatibility.')
+                            Sig_lin = Sig_lin[:,:Sig.shape[1]]
+                            Sig_db = Sig_db[:,:Sig.shape[1]]
+                            powerMask = list(powerMask)
+                            powerMask[3] = powerMask[3][:Sig.shape[1],:]
+                            
+                            start = time.time()
+                            SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                            end = time.time()
+                            SK_time = end - start
+                            try: 
+                                SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                            except Exception as e:
+                                print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                continue
+                            SKds[sr,fc,fs,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP, SK_time]
+
+                            # adjust the Signal length to be compatible with the m 
+                            # Sig = Sig[:,:SKmit.shape[1]]
+                            
+                            # powerMask = list(powerMask)
+                            # powerMask[3] = powerMask[3][:SKmit.shape[1],:]
+
+                            #Skipping m values that are not the first m value because they are redundant for the other methods
+                            
+                            
+                            for n_val in range(3):
+                                # lower, upper = msSKThresh[m-7,n_val,:]
+                                start = time.time()
+                                ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m)
+                                end = time.time()
+                                msSK_time = end - start
                                 try:
-                                    Sig, Sig_lin, Sig_db, powerMask = VoltToSig(RawVolt, M=2**m, SNR=SNR[snr], DC=DC[dc])
-                                except Exception as e:
-                                    print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
-                                    continue
-
-                                SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
-
-                                # adjust the Signal length to be compatible with the m 
-                                Sig = Sig[:,:SKmit.shape[1]]
-                                Sig_lin = Sig_lin[:,:SKmit.shape[1]]
-                                Sig_db = Sig_db[:,:SKmit.shape[1]]
-                                
-                                powerMask = list(powerMask)
-                                powerMask[3] = powerMask[3][:SKmit.shape[1],:]
-
-
-                                ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m) 
-                                # ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[0.00,0.92,0.25,0.001], bins = 75)
-                                # AoMit = aoflaggerMit(Sig_lin, count=1)
-                                
-                                try:
-                                    # SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
                                     msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
-                                    # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
-                                    # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
                                 except Exception as e:
                                     print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
                                     continue
-                                ds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP]
-                    print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
-                    ds.to_netcdf('QPSK_msSK.nc')
-    ds.to_netcdf('QPSK_msSK_Full.nc')
+                                msSKds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
+
+                            if m != 7:
+                                continue
+                            print("I am doing convRFI and AOFlagger now: m = ", m)
+
+                            for A1i, A1 in enumerate(Agfac1):
+                                for A2i, A2 in enumerate(Agfac2):
+                                    for A3i, A3 in enumerate(Agfac3):
+                                        for A4i, A4 in enumerate(Agfac4):
+                                            for bi, b in enumerate(bins):
+                                                try:
+                                                    start = time.time()
+                                                    ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
+                                                    end = time.time()
+                                                    Conv_time = end - start
+                                                except Exception as e:
+                                                    print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                    continue
+                                                try:
+                                                    Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                                                except Exception as e:
+                                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                    continue
+                                                ConvRFIds[sr,fc,fs,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP, Conv_time] 
+                                
+                            # for ci, c in enumerate(Count):
+                            #     try:
+                                    #   start = time.time()
+                            #         AoMit = aoflaggerMit(Sig_lin, count=c)
+                                    #   end = time.time()
+                            #         AO_time = end - start
+                            #     except Exception as e:
+                            #         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #         continue
+                            #     try:
+                            #         Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                            #     except Exception as e:
+                            #         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #         continue
+                            #     AOFlaggerds[sr,fc,fs,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP, AO_time]
+                            
+
+                        # try:
+                        #     # SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                        #     # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                        #     # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                        # except Exception as e:
+                        #     print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                        #     continue
+                        # msSKds[sr,fc,fs,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP]
+    
+                print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                SKds.to_netcdf(f'QPSK_SK_{sr}_{fc}_{fs}.nc')
+                msSKds.to_netcdf(f'QPSK_msSK_{sr}_{fc}_{fs}.nc')
+                ConvRFIds.to_netcdf(f'QPSK_ConvRFI_{sr}_{fc}_{fs}.nc')
+                AOFlaggerds.to_netcdf(f'QPSK_AOFlagger_{sr}_{fc}_{fs}.nc')
+    SKds.to_netcdf('QPSK_SK_full.nc')           
+    msSKds.to_netcdf('QPSK_msSK_full.nc')
+    ConvRFIds.to_netcdf('QPSK_ConvRFI_full.nc')
+    AOFlaggerds.to_netcdf('QPSK_AOFlagger_full.nc')
+    
 except Exception as e:
     print(f'Error in main loop: {e}')
-    ds.to_netcdf('QPSK_msSK_partial.nc')
+    SKds.to_netcdf('QPSK_SK_partial.nc')
+    msSKds.to_netcdf('QPSK_msSK_partial.nc')
+    ConvRFIds.to_netcdf('QPSK_ConvRFI_partial.nc')
+    AOFlaggerds.to_netcdf('QPSK_AOFlagger_partial.nc')
 
-
-### ASK FOR msSK
-emptyData = np.full((6, 4, 5, 4, 6, 3, 4,6, 4), np.nan)
+    
+### ASK FOR SK
 SymRt = [1, 4,20,50,100,200]
 FC = [0,1/8,1/4,1/2]
 FS = [100,300,500,650,800]
-Bias = [0.2, 0.5, 0.75, 1.0]
+Bias2 = [0.2, 0.5, 0.75]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Bias2),6, len(SNR), len(DC), 5), np.nan)
+CoordsDict = {
+    # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
+    'Bias2': Bias2,
+    'M': np.power(2, np.arange(7, 13)),
+    # 'N': np.arange(1, 6),
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+SKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
+
+### ASK FOR msSK
+emptyData = np.full((6, 4, 5, 3, 3, 6,4,6, 5), np.nan)
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+Bias2 = [0.2, 0.5, 0.75]
 n = [2,4,8]
 SNR = [0.5, 1, 2, 4]
 DC = [15,30,50,60,75,100]
@@ -1186,19 +1391,71 @@ CoordsDict = {
     'FC': FC,
     'FS': FS,
     # 'Wincut': np.arange(1, 6)*0.05,
-    'Bias': Bias,
-    'M': np.power(2, np.arange(7, 13)),
+    # 'm': m,
+    'Bias2': Bias2,
     'n': n,
+    'M': np.power(2, np.arange(7, 13)),
     # 'N': np.arange(1, 6),
     'SNR': SNR,
     'DC': DC,
     
-    'Metrics': ['precision', 'accuracy', 'TP', 'FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
+msSKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
-ds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=['SymbolRate', 'FC', 'FS','Bias','n', 'M', 'SNR', 'DC', 'Metrics'])
-### QPSK FOR msSK
-#counter to keep track of the metric index for each method
+###ASK for ConvRFI
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+Bias2 = [0.2, 0.5, 0.75]
+Agfac1 = [0.00, 0.45, 1.66, 3.00]
+Agfac2 = [0.00, 0.45, 1.66, 3.00]
+Agfac3 = [0.00, 0.45, 1.66, 3.00]
+Agfac4 = [0.00, 0.45, 1.66, 3.00]
+bins = [26, 80, 128, 160]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Bias2), len(Agfac1), len(Agfac2), len(Agfac3), len(Agfac4), len(bins), len(SNR), len(DC), 5), np.nan)
+
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    'Bias2': Bias2,
+    'AggressionFactor1': Agfac1,
+    'AggressionFactor2': Agfac2,
+    'AggressionFactor3': Agfac3,
+    'AggressionFactor4': Agfac4,
+    'Bins': bins,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+ConvRFIds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
+
+###ASK for AOFlagger
+SymRt = [1, 4,20,50,100,200]
+FC = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+Bias2 = [0.2, 0.5, 0.75]
+Count = [1, 5]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(FC), len(FS), len(Bias2), len(Count), len(SNR), len(DC), 5), np.nan)
+
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'FC': FC,
+    'FS': FS,
+    'Bias2': Bias2,
+    'Count': Count,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+AOFlaggerds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
+
+### ASK
 try:
     for sr in range(6):
         
@@ -1206,66 +1463,178 @@ try:
         
         for fc in range(4): 
             for fs in range(5):
-                for b in range(4):    
-                # if 5*sr*30*1e6 > fs*200*1e6:
-                #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
-                #     continue
+                for b2 in range(3):  
+            # if 5*sr*30*1e6 > fs*200*1e6:
+            #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
+            #     continue
                     try:
-                        RawVolt = VoltGen('ask', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+256)*1e6, biases= np.array([Bias[b], 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
+                        RawVolt = VoltGen('ask', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([1,Bias2[b2]]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
                     except Exception as e:
                         print(f'Error generating voltage signal for SymbolRate={SymRt[sr]}, fc={FC[fc]}, FS={FS[fs]}: {e}')
                         continue
-                    for n_val in range(3):
-                        for m in range(7,13):
-                            # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
-                                #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
+                    # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
+                        #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
+                        #     continue
+                    for snr in range(4):
+                        noise = np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8)
+                        for dc in range(6):
+                            DuVolt = DuCyc(RawVolt, DC=DC[dc])
+                            for m in range(7, 13):
+                                print(f'Processing: SymbolRate={SymRt[sr]} ksps, fc={(FC[fc]*(FS[fs]/128)+120)*1e6} Hz, FS={FS[fs]*1e6} Hz, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                                Sig, Sig_lin, Sig_db, powerMask = VolttoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
+                                # Sig, Sig_lin, Sig_db, powerMask = sigGen('ask', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
+
+                                # except Exception as e:
+                                #     print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
                                 #     continue
-                            for snr in range(4):
-                                for dc in range(6):
-                                    try:
-                                        Sig, Sig_lin, Sig_db, powerMask = VoltToSig(RawVolt, M=2**m, SNR=SNR[snr], DC=DC[dc])
-                                    except Exception as e:
-                                        print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
-                                        continue
 
-                                    SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                                #Adjusting Signal length to be compatible with the m value
+                                times = Sig.shape[1]
+                                if times % (2**m) != 0:                                            
+                                    print(f'M (time bin size) must be a factor of the number of time samples. Got M={2**m} and time samples={times}.')
+                                    if 2**m > times:
+                                        raise ValueError('M is larger than the number of time samples. Thats not enough samples')
+                                    Sig = Sig[:,:-(times % (2**m))]
+                                    print(f'Adjusting signal length to {Sig.shape[1]} for compatibility.')
+                                Sig_lin = Sig_lin[:,:Sig.shape[1]]
+                                Sig_db = Sig_db[:,:Sig.shape[1]]
+                                powerMask = list(powerMask)
+                                powerMask[3] = powerMask[3][:Sig.shape[1],:]
+                                
+                                start = time.time()
+                                SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                                end = time.time()
+                                SK_time = end - start
 
-                                    # adjust the Signal length to be compatible with the m 
-                                    Sig = Sig[:,:SKmit.shape[1]]
-                                    Sig_lin = Sig_lin[:,:SKmit.shape[1]]
-                                    Sig_db = Sig_db[:,:SKmit.shape[1]]
+                                try: 
+                                    SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                                except Exception as e:
+                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                    continue
+                                SKds[sr,fc,fs,b2,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP, SK_time]
+
+                                # adjust the Signal length to be compatible with the m 
+                                # Sig = Sig[:,:SKmit.shape[1]]
+                                
+                                # powerMask = list(powerMask)
+                                # powerMask[3] = powerMask[3][:SKmit.shape[1],:]
+
+                                #Skipping m values that are not the first m value because they are redundant for the other methods
+                                
+                                
+                                for n_val in range(3):
+                                    # lower, upper = msSKThresh[m-7,n_val,:]
+                                    start = time.time()
+                                    ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m)
+                                    end = time.time()
+                                    msSK_time = end - start
                                     
-                                    powerMask = list(powerMask)
-                                    powerMask[3] = powerMask[3][:SKmit.shape[1],:]
-
-
-                                    ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m) 
-                                    # ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[0.00,0.92,0.25,0.001], bins = 75)
-                                    # AoMit = aoflaggerMit(Sig_lin, count=1)
-                                    
                                     try:
-                                        # SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
                                         msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
-                                        # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
-                                        # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
                                     except Exception as e:
                                         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
                                         continue
-                                    ds[sr,fc,fs,b,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP]
-                        print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
-                        ds.to_netcdf('ASK_msSK.nc')
-    ds.to_netcdf('ASK_msSK_Full.nc')
+                                    msSKds[sr,fc,fs,b2,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
+
+                                if m != 7:
+                                    continue
+                                print("I am doing convRFI and AOFlagger now: m = ", m)
+
+                                for A1i, A1 in enumerate(Agfac1):
+                                    for A2i, A2 in enumerate(Agfac2):
+                                        for A3i, A3 in enumerate(Agfac3):
+                                            for A4i, A4 in enumerate(Agfac4):
+                                                for bi, b in enumerate(bins):
+                                                    try:
+                                                        start = time.time()
+                                                        ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
+                                                        end = time.time()
+                                                        Conv_time = end - start
+                                                    except Exception as e:
+                                                        print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                        continue
+                                                    try:
+                                                        Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                                                    except Exception as e:
+                                                        print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                        continue
+                                                    ConvRFIds[sr,fc,fs,b2,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP, Conv_time] 
+                                    
+                                # for ci, c in enumerate(Count):
+                                #     try:
+                                        #  start = time.time()
+                                #         AoMit = aoflaggerMit(Sig_lin, count=c)
+                                #         end = time.time()
+                                #         AO_time = end - start
+                                #     except Exception as e:
+                                #         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                #         continue
+                                #     try:
+                                #         Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                                #     except Exception as e:
+                                #         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                #         continue
+                                #     AOFlaggerds[sr,fc,fs,b2,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP, AO_time]
+                                
+
+                            # try:
+                            #     # SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                            #     # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                            #     # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                            # except Exception as e:
+                            #     print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #     continue
+                            #     msSKds[sr,fc,fs,b2,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
+        
+                print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(FC[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                SKds.to_netcdf(f'ASK_SK_{sr}_{fc}_{fs}.nc')
+                msSKds.to_netcdf(f'ASK_msSK_{sr}_{fc}_{fs}.nc')
+                ConvRFIds.to_netcdf(f'ASK_ConvRFI_{sr}_{fc}_{fs}.nc')
+                AOFlaggerds.to_netcdf(f'ASK_AOFlagger_{sr}_{fc}_{fs}.nc')
+    SKds.to_netcdf('ASK_SK_full.nc')           
+    msSKds.to_netcdf('ASK_msSK_full.nc')
+    ConvRFIds.to_netcdf('ASK_ConvRFI_full.nc')
+    AOFlaggerds.to_netcdf('ASK_AOFlagger_full.nc')
+    
 except Exception as e:
     print(f'Error in main loop: {e}')
-    ds.to_netcdf('ASK_msSK_partial.nc')
+    SKds.to_netcdf('ASK_SK_partial.nc')
+    msSKds.to_netcdf('ASK_msSK_partial.nc')
+    ConvRFIds.to_netcdf('ASK_ConvRFI_partial.nc')
+    AOFlaggerds.to_netcdf('ASK_AOFlagger_partial.nc')
 
+
+### BFSK FOR SK
+SymRt = [1, 4,20,50,100,200]
+F1mod = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+F2 = [125, 175, 250]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(F1mod), len(FS), len(F2),6, len(SNR), len(DC), 5), np.nan)
+CoordsDict = {
+    # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
+    'SymbolRate': SymRt,
+    'F1mod': F1mod,
+    'FS': FS,
+    # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
+    'F2': F2,
+    'M': np.power(2, np.arange(7, 13)),
+    # 'N': np.arange(1, 6),
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+SKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
 ### BFSK FOR msSK
-emptyData = np.full((6, 4, 5, 4, 4, 6,3, 4,6, 4), np.nan)
-SymRt = [1,4,20,50,100,200]
-F2Mod = [0,1/8,1/4,1/2]
+emptyData = np.full((6, 4, 5, 3, 3, 6,4,6, 5), np.nan)
+SymRt = [1, 4,20,50,100,200]
+F1mod = [0,1/8,1/4,1/2]
 FS = [100,300,500,650,800]
-F2 = [175, 200, 250, 400]
+F2 = [125, 175, 250]
 n = [2,4,8]
 SNR = [0.5, 1, 2, 4]
 DC = [15,30,50,60,75,100]
@@ -1273,80 +1642,218 @@ DC = [15,30,50,60,75,100]
 CoordsDict = {
     # 'Rmethod': ['bpsk', 'ask', 'qpsk', 'bfsk'],
     'SymbolRate': SymRt,
-    'F2Mod': F2Mod,
+    'F1mod': F1mod,
     'FS': FS,
     # 'Wincut': np.arange(1, 6)*0.05,
+    # 'm': m,
     'F2': F2,
-    'M': np.power(2, np.arange(7, 13)),
     'n': n,
+    'M': np.power(2, np.arange(7, 13)),
     # 'N': np.arange(1, 6),
     'SNR': SNR,
     'DC': DC,
     
-    'Metrics': ['BFSK_precision', 'BFSK_accuracy', 'BFSK_TP', 'BFSK_FP']
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
 }
+msSKds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=CoordsDict.keys())
 
-ds = xr.DataArray(emptyData,  coords=CoordsDict ,dims=['SymbolRate', 'F2Mod', 'FS','F2', 'n', 'M', 'SNR', 'DC', 'Metrics'])
-### BFSK FOR msSK
-#counter to keep track of the metric index for each method
+###BFSK for ConvRFI
+SymRt = [1, 4,20,50,100,200]
+F1mod = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+F2 = [125, 175, 250]
+Agfac1 = [0.00, 0.45, 1.66, 3.00]
+Agfac2 = [0.00, 0.45, 1.66, 3.00]
+Agfac3 = [0.00, 0.45, 1.66, 3.00]
+Agfac4 = [0.00, 0.45, 1.66, 3.00]
+bins = [26, 80, 128, 160]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(F1mod), len(FS), len(F2), len(Agfac1), len(Agfac2), len(Agfac3), len(Agfac4), len(bins), len(SNR), len(DC), 5), np.nan)
+
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'F1mod': F1mod,
+    'FS': FS,
+    'F2': F2,
+    'AggressionFactor1': Agfac1,
+    'AggressionFactor2': Agfac2,
+    'AggressionFactor3': Agfac3,
+    'AggressionFactor4': Agfac4,
+    'Bins': bins,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+ConvRFIds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
+
+###BFSK for AOFlagger
+SymRt = [1, 4,20,50,100,200]
+F1mod = [0,1/8,1/4,1/2]
+FS = [100,300,500,650,800]
+F2 = [125, 175, 250]
+Count = [1, 5]
+SNR = [0.5, 1, 2, 4]
+DC = [15,30,50,60,75,100]
+emptyData = np.full((len(SymRt), len(F1mod), len(FS), len(F2), len(Count), len(SNR), len(DC), 5), np.nan)
+
+CoordsDict = {
+    'SymbolRate': SymRt,
+    'F1mod': F1mod,
+    'FS': FS,
+    'F2': F2,
+    'Count': Count,
+    'SNR': SNR,
+    'DC': DC,
+    'Metrics': ['precision', 'accuracy', 'TP', 'FP', 'time']
+}
+AOFlaggerds = xr.DataArray(emptyData, coords=CoordsDict ,dims=CoordsDict.keys())
+
+### BFSK
 try:
     for sr in range(6):
         
-        print(f'{(sr)/(6)} percent complete')
-            
-        for fc in range(4): 
-            for fs in range(5):  
-                # if 5*sr*30*1e6 > fs*200*1e6:
-                #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
-                #     continue
-                try:
-                    RawVolt = VoltGen('qpsk', 75, SymRt[sr], ((F2Mod[fc]*(FS[fs]/128))+256)*1e6, biases= np.array([F2[b], 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
-                except Exception as e:
-                    print(f'Error generating voltage signal for SymbolRate={SymRt[sr]}, fc={F2Mod[fc]}, FS={FS[fs]}: {e}')
-                    continue
-                for n_val in range(3):
+        print(f'{(sr/6)} percent complete')
+        
+        for f1 in range(4): 
+            for fs in range(5):
+                for f2 in range(3):  
+            # if 5*sr*30*1e6 > fs*200*1e6:
+            #     print(f'Skipping invalid configuration: SymbolRate={SymRt[sr]} ksps, FS={FS[fs]} MHz')
+            #     continue
+                    try:
+                        RawVolt = VoltGen('bfsk', 75, SymRt[sr], ((F1mod[f1]*(FS[fs]/128))+115)*1e6, biases= np.array([1,F2[f2]]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6)
+                    except Exception as e:
+                        print(f'Error generating voltage signal for SymbolRate={SymRt[sr]}, fc={F1mod[f1]}, FS={FS[fs]}: {e}')
+                        continue
+                    # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
+                        #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
+                        #     continue
+                    for snr in range(4):
+                        noise = np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8) + 1.j*np.random.RandomState().normal(0,1/SNR[snr],size=len(RawVolt)).astype(np.int8)
+                        for dc in range(6):
+                            DuVolt = DuCyc(RawVolt, DC=DC[dc])
+                            for m in range(7, 13):
+                                print(f'Processing: SymbolRate={SymRt[sr]} ksps, fc={(F1mod[f1]*(FS[fs]/128)+115)*1e6} Hz, FS={FS[fs]*1e6} Hz, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                                Sig, Sig_lin, Sig_db, powerMask = VolttoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
 
-                    for m in range(7,13):
-                        # if 24*16*128*m > 6000*nb*fs*200*1e6/(SymRt[sr]*30*1e6):
-                            #     print(f'Skipping invalid configuration: M={128*m}, nbits={6000*nb}, fs={FS[fs]} MHz, SymbolRate={SymRt[sr]} ksps')
-                            #     continue
-                        for snr in range(4):
-                            for dc in range(6):
-                                try:
-                                    Sig, Sig_lin, Sig_db, powerMask = VoltToSig(RawVolt, M=2**m, SNR=SNR[snr], DC=DC[dc])
-                                except Exception as e:
-                                    print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(F2Mod[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
-                                    continue
+                                # Sig, Sig_lin, Sig_db, powerMask = sigGen('bfsk', 75, SymRt[sr], ((F1mod[f1]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
 
+                                # except Exception as e:
+                                #     print (f'Error converting voltage to signal for SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}: {e}')
+                                #     continue
+
+                                #Adjusting Signal length to be compatible with the m value
+                                times = Sig.shape[1]
+                                if times % (2**m) != 0:                                            
+                                    print(f'M (time bin size) must be a factor of the number of time samples. Got M={2**m} and time samples={times}.')
+                                    if 2**m > times:
+                                        raise ValueError('M is larger than the number of time samples. Thats not enough samples')
+                                    Sig = Sig[:,:-(times % (2**m))]
+                                    print(f'Adjusting signal length to {Sig.shape[1]} for compatibility.')
+                                Sig_lin = Sig_lin[:,:Sig.shape[1]]
+                                Sig_db = Sig_db[:,:Sig.shape[1]]
+                                powerMask = list(powerMask)
+                                powerMask[3] = powerMask[3][:Sig.shape[1],:]
+                                
+                                start = time.time()
                                 SKmit = SKmitigate(Sig_lin, n=1, d=1, m=2**m)
+                                end = time.time()
+                                SK_time = end - start
+
+                                try: 
+                                    SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                                except Exception as e:
+                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                    continue
+                                SKds[sr,f1,fs,f2,m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP, SK_time]
 
                                 # adjust the Signal length to be compatible with the m 
-                                Sig = Sig[:,:SKmit.shape[1]]
-                                Sig_lin = Sig_lin[:,:SKmit.shape[1]]
-                                Sig_db = Sig_db[:,:SKmit.shape[1]]
+                                # Sig = Sig[:,:SKmit.shape[1]]
                                 
-                                powerMask = list(powerMask)
-                                powerMask[3] = powerMask[3][:SKmit.shape[1],:]
+                                # powerMask = list(powerMask)
+                                # powerMask[3] = powerMask[3][:SKmit.shape[1],:]
 
-
-                                ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m) 
-                                # ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[0.00,0.92,0.25,0.001], bins = 75)
-                                # AoMit = aoflaggerMit(Sig_lin, count=1)
+                                #Skipping m values that are not the first m value because they are redundant for the other methods
                                 
-                                try:
-                                    SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
-                                    # msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
-                                    # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
-                                    # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
-                                except Exception as e:
-                                    print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F2Mod[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                
+                                for n_val in range(3):
+                                    # lower, upper = msSKThresh[m-7,n_val,:]
+                                    start = time.time()
+                                    ms_SKmit, SKarr = ms_SKmitigate(Sig_lin, n=n[n_val], d=1, m=2**m)
+                                    end = time.time()
+                                    msSK_time = end - start
+                                    
+                                    try:
+                                        msSK_TP, msSK_FP, msSK_Pr, msSK_Acc = errorCalculator(powerMask, ms_SKmit)
+                                    except Exception as e:
+                                        print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                        continue
+                                    msSKds[sr,f1,fs,f2,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
+
+                                if m != 7:
                                     continue
-                                ds[sr,fc,fs,b,n_val, m-7,snr,dc,:] = [SK_Pr, SK_Acc, SK_TP, SK_FP]
-                    print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(F2Mod[fc]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
-                    ds.to_netcdf(f'BFSK_msSK_{sr}_{fc}_{fs}.nc')
-    ds.to_netcdf(f'BFSK_msSK_full.nc')
+                                print("I am doing convRFI and AOFlagger now: m = ", m)
+
+                                for A1i, A1 in enumerate(Agfac1):
+                                    for A2i, A2 in enumerate(Agfac2):
+                                        for A3i, A3 in enumerate(Agfac3):
+                                            for A4i, A4 in enumerate(Agfac4):
+                                                for bi, b in enumerate(bins):
+                                                    try:
+                                                        start = time.time()
+                                                        ConvMit = ConvRFI_mitigate(Sig_lin, agg_factor=[A1,A2,A3,A4], bins = b)
+                                                        end = time.time()
+                                                        Conv_time = end - start
+                                                    except Exception as e:
+                                                        print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                        continue
+                                                    try:
+                                                        Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                                                    except Exception as e:
+                                                        print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                                        continue
+                                                    ConvRFIds[sr,f1,fs,f2,A1i,A2i,A3i,A4i,bi,snr,dc,:] = [Conv_Pr, Conv_Acc, Conv_TP, Conv_FP, Conv_time] 
+                                    
+                                # for ci, c in enumerate(Count):
+                                #     try:
+                                        #  start = time.time()
+                                #         AoMit = aoflaggerMit(Sig_lin, count=c)
+                                #         end = time.time()
+                                #         AO_time = end - start
+                                #     except Exception as e:
+                                #         print(f'Error mitigating signal for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                #         continue
+                                #     try:
+                                #         Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                                #     except Exception as e:
+                                #         print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                                #         continue
+                                #     AOFlaggerds[sr,f1,fs,f2,ci,snr,dc,:] = [Ao_Pr, Ao_Acc, Ao_TP, Ao_FP, AO_time]
+                                
+
+                            # try:
+                            #     # SK_TP, SK_FP, SK_Pr, SK_Acc = errorCalculator(powerMask, SKmit)
+                            #     # Conv_TP, Conv_FP, Conv_Pr, Conv_Acc = errorCalculator(powerMask, ConvMit)
+                            #     # Ao_TP, Ao_FP, Ao_Pr, Ao_Acc = errorCalculator(powerMask, AoMit)
+                            # except Exception as e:
+                            #     print(f'Error calculating metrics for SNR={SNR[snr]}, SymbolRate={SymRt[sr]}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}: {e}')
+                            #     continue
+                            #     msSKds[sr,f1,fs,f2,n_val, m-7,snr,dc,:] = [msSK_Pr, msSK_Acc, msSK_TP, msSK_FP, msSK_time]
+        
+                print (f'Completed metrics for SymbolRate={(SymRt[sr])}, fc={(F1mod[f1]*(FS[fs]/128)+256)*1e6}, FS={FS[fs]*1e6}, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
+                SKds.to_netcdf(f'ASK_SK_{sr}_{f1}_{fs}.nc')
+                msSKds.to_netcdf(f'ASK_msSK_{sr}_{f1}_{fs}.nc')
+                ConvRFIds.to_netcdf(f'ASK_ConvRFI_{sr}_{f1}_{fs}.nc')
+                AOFlaggerds.to_netcdf(f'ASK_AOFlagger_{sr}_{f1}_{fs}.nc')
+    SKds.to_netcdf('ASK_SK_full.nc')           
+    msSKds.to_netcdf('ASK_msSK_full.nc')
+    ConvRFIds.to_netcdf('ASK_ConvRFI_full.nc')
+    AOFlaggerds.to_netcdf('ASK_AOFlagger_full.nc')
+    
 except Exception as e:
     print(f'Error in main loop: {e}')
-    ds.to_netcdf('BFSK_msSK_partial.nc')
-
-
+    SKds.to_netcdf('ASK_SK_partial.nc')
+    msSKds.to_netcdf('ASK_msSK_partial.nc')
+    ConvRFIds.to_netcdf('ASK_ConvRFI_partial.nc')
+    AOFlaggerds.to_netcdf('ASK_AOFlagger_partial.nc')
