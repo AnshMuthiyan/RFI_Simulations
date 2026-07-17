@@ -5,3 +5,9 @@ RFI_Simulations/.gitignore
 *.nc
 *.nbc
 *.nbi
+*.pyc
+*.pyo
+*.pyd
+*.nc
+*.csv
+*.png
