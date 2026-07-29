@@ -1229,7 +1229,7 @@ try:
                         DuVolt = DuCyc(RawVolt, DC=DC[dc])
                         for m in range(7, 13):
                             print(f'Processing: SymbolRate={SymRt[sr]} ksps, fc={(FC[fc]*(FS[fs]/128)+120)*1e6} Hz, FS={FS[fs]*1e6} Hz, M={2**m}, SNR={SNR[snr]}, DC={DC[dc]}')
-                            Sig, Sig_lin, Sig_db, powerMask = VolttoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
+                            Sig, Sig_lin, Sig_db, powerMask = VoltStoSig(DuVolt, noise, M=2**m, SNR=SNR[snr], DC=DC[dc])
 
                             # Sig, Sig_lin, Sig_db, powerMask = sigGen('qpsk', 75, SymRt[sr], ((FC[fc]*(FS[fs]/128))+120)*1e6, biases= np.array([0.5, 1]), f1=350e6, f0=150e6, wincut=0.15, fs=FS[fs]*1e6, M=2**m, SNR=SNR[snr], DC=DC[dc])
 

@@ -9,13 +9,27 @@ import corner
 import xarray as xr
 import torch
 
-results = xr.open_dataarray('BPSK_AOFlagger_0_0_0.nc')
+# dims=["SymbolRate", "FC", "FS", "M", "SNR", "DC"]
+dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"]
+
+unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_AOFlagger_combined.nc')
+# unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_SK_combined.nc')
+
+# def makeDaPlots(unfiltered_results, param="SymbolRate", dims=["SymbolRate", "FC", "FS", "M", "SNR", "DC"], SymRt_thersholds=(None,None), FC_thersholds=(None,None), FS_thersholds=(None,None), M_thersholds=(None,None), SNR_thersholds=(None,None), DC_thersholds=(None,None)):
+#remove all parameters combinations with FP > 0.05
+fp_thereshold = 0.05
+fp = unfiltered_results.sel(Metrics="FP") <= fp_thereshold
+results = unfiltered_results.where(fp.expand_dims(Metrics = unfiltered_results.coords['Metrics']), drop=True)
+
+#filter other parameters
+# results = results.sel(SymbolRate=slice(SymRt_thersholds[0],SymRt_thersholds[1]), FC=slice(FC_thersholds[0],FC_thersholds[1]), FS=slice(FS_thersholds[0],FS_thersholds[1]), M=slice(M_thersholds[0],M_thersholds[1]), SNR=slice(SNR_thersholds[0],SNR_thersholds[1]), DC=slice(DC_thersholds[0],DC_thersholds[1]))
 
 
-met = "precision"
-param = "Count"
+# met = "precision"
+param = "param"
+dims = dims
 
-TPflattened = results.sel(Metrics="TP").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
+TPflattened = results.sel(Metrics="TP").stack(all_dims=dims)
 TPcleaned = TPflattened.dropna("all_dims", how="all")
 TPcleaned = TPcleaned.where(TPcleaned !=0 , drop=True)
 TPcleaned.data = xr.where(np.isfinite(TPcleaned.data), TPcleaned.data, np.nan)
@@ -39,7 +53,7 @@ axs[0, 0].set_ylabel("True Positive Rate")
 axs[0, 0].set_title(f"Spectral Kurtosis TP vs {param}")
 
 
-FPflattened = results.sel(Metrics="FP").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
+FPflattened = results.sel(Metrics="FP").stack(all_dims=dims)
 FPcleaned = FPflattened.dropna("all_dims", how="all")
 FPcleaned = FPcleaned.where(FPcleaned !=0 , drop=True)
 FPcleaned.data = xr.where(np.isfinite(FPcleaned.data), FPcleaned.data, np.nan)
@@ -58,7 +72,7 @@ axs[0, 1].set_xlabel("Duty Cycle")
 axs[0, 1].set_ylabel("False Positive Rate")
 axs[0, 1].set_title(f"Spectral Kurtosis FP vs {param}")
 
-PRflattened = results.sel(Metrics="precision").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
+PRflattened = results.sel(Metrics="precision").stack(all_dims=dims)
 PRcleaned = PRflattened.dropna("all_dims", how="all")
 PRcleaned = PRcleaned.where(PRcleaned !=0 , drop=True)
 PRcleaned.data = xr.where(np.isfinite(PRcleaned.data), PRcleaned.data, np.nan)
@@ -77,7 +91,7 @@ axs[1, 0].set_xlabel("Duty Cycle")
 axs[1, 0].set_ylabel("Precision")
 axs[1, 0].set_title(f"Spectral Kurtosis precision vs {param}")
 
-ACflattened = results.sel(Metrics="accuracy").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
+ACflattened = results.sel(Metrics="accuracy").stack(all_dims=dims)
 
 ACcleaned = ACflattened.dropna("all_dims", how="all")
 ACcleaned = ACcleaned.where(ACcleaned !=0 , drop=True)
@@ -98,7 +112,6 @@ axs[1, 1].set_ylabel("Accuracy")
 axs[1, 1].set_title(f"Spectral Kurtosis accuracy vs {param}")
 
 plt.legend()
-plt.show()
 plt.close("all")
 CornerDS = results.sel(Metrics="accuracy").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
 DSTP = results.sel(Metrics="TP").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
