@@ -9,114 +9,77 @@ import corner
 import xarray as xr
 import torch
 
-# dims=["SymbolRate", "FC", "FS", "M", "SNR", "DC"]
-dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"]
+RFIMit = "msSK"
+SigGen = "QPSK" 
+dims = ["SymbolRate", "FC", "FS", "M", "n", "SNR", "DC"]
 
-unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_AOFlagger_combined.nc')
-# unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_SK_combined.nc')
+unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/QPSK_msSK_full.nc')
 
-# def makeDaPlots(unfiltered_results, param="SymbolRate", dims=["SymbolRate", "FC", "FS", "M", "SNR", "DC"], SymRt_thersholds=(None,None), FC_thersholds=(None,None), FS_thersholds=(None,None), M_thersholds=(None,None), SNR_thersholds=(None,None), DC_thersholds=(None,None)):
-#remove all parameters combinations with FP > 0.05
-fp_thereshold = 0.05
-fp = unfiltered_results.sel(Metrics="FP") <= fp_thereshold
-results = unfiltered_results.where(fp.expand_dims(Metrics = unfiltered_results.coords['Metrics']), drop=True)
-
-#filter other parameters
-# results = results.sel(SymbolRate=slice(SymRt_thersholds[0],SymRt_thersholds[1]), FC=slice(FC_thersholds[0],FC_thersholds[1]), FS=slice(FS_thersholds[0],FS_thersholds[1]), M=slice(M_thersholds[0],M_thersholds[1]), SNR=slice(SNR_thersholds[0],SNR_thersholds[1]), DC=slice(DC_thersholds[0],DC_thersholds[1]))
-
-
-# met = "precision"
-param = "param"
-dims = dims
-
-TPflattened = results.sel(Metrics="TP").stack(all_dims=dims)
-TPcleaned = TPflattened.dropna("all_dims", how="all")
-TPcleaned = TPcleaned.where(TPcleaned !=0 , drop=True)
-TPcleaned.data = xr.where(np.isfinite(TPcleaned.data), TPcleaned.data, np.nan)
-
-TPaxis = TPcleaned.indexes["all_dims"].get_level_values(param)
-TPaverages = TPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-TPSTD = TPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-TPmedians = TPcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-print(f"Averages for TP grouped by {param}:")
-print(TPaverages)
-print(f'Shape of the flattened data: {TPflattened.shape}')
-fig, axs = plt.subplots(2, 2, figsize=(12, 12), constrained_layout=True)
-axs[0, 0].scatter(TPaxis, TPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[0, 0].scatter(np.unique(TPaxis), TPaverages, color='red', label=f"Mean TP")
-axs[0, 0].errorbar(np.unique(TPaxis), TPaverages, yerr=TPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {met}")
-axs[0, 0].scatter(np.unique(TPaxis), TPmedians, color='blue', label=f"Median TP")
-axs[0, 0].set_ylim(np.min(TPaverages-TPSTD)*1.2, np.max(TPaverages+TPSTD)*1.2)
-axs[0, 0].set_xlabel("Duty Cycle")
-axs[0, 0].set_ylabel("True Positive Rate")
-axs[0, 0].set_title(f"Spectral Kurtosis TP vs {param}")
+default_FP_thers = 0.05
+metrics = [
+    ("TP", "True Positive Rate"),
+    ("FP", "False Positive Rate"),
+    ("precision", "Precision"),
+    ("accuracy", "Accuracy"),
+    ("time", "Execution Time (s)"),
+]
 
 
-FPflattened = results.sel(Metrics="FP").stack(all_dims=dims)
-FPcleaned = FPflattened.dropna("all_dims", how="all")
-FPcleaned = FPcleaned.where(FPcleaned !=0 , drop=True)
-FPcleaned.data = xr.where(np.isfinite(FPcleaned.data), FPcleaned.data, np.nan)
+param = "M"
+thresholds = None
+fp_threshold = default_FP_thers
+# def makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds=None, fp_threshold=default_FP_thers):
+if param not in dims:
+    raise ValueError(f"'{param}' is not one of the available parameters: {dims}")
 
-FPaxis = FPcleaned.indexes["all_dims"].get_level_values(param)
-FPaverages = FPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-FPSTD = FPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-FPMedians = FPcleaned.groupby(param).median(dim="all_dims", skipna=True)
+thresholds = thresholds or {}
 
-axs[0, 1].scatter(FPaxis, FPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[0, 1].scatter(np.unique(FPaxis), FPaverages, color='red', label=f"Mean FP")
-axs[0, 1].errorbar(np.unique(FPaxis), FPaverages, yerr=FPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of FP")
-axs[0, 1].scatter(np.unique(FPaxis), FPMedians, color='blue', label=f"Median FP")
-axs[0, 1].set_ylim(np.min(FPaverages-FPSTD)*1.2, np.max(FPaverages+FPSTD)*1.2)
-axs[0, 1].set_xlabel("Duty Cycle")
-axs[0, 1].set_ylabel("False Positive Rate")
-axs[0, 1].set_title(f"Spectral Kurtosis FP vs {param}")
+#make mask for FP thresholding
+fp = unfiltered_results.sel(Metrics="FP") <= fp_threshold
+#print percent of data points that pass the FP threshold
+percent_pass = fp.sum().item() / fp.size * 100
+print(f"Percent of data points that pass the FP threshold of {fp_threshold}: {percent_pass:.2f}%")
+#apply that mask
+results = unfiltered_results.where(fp.expand_dims(Metrics=unfiltered_results.coords['Metrics']), drop=True)
 
-PRflattened = results.sel(Metrics="precision").stack(all_dims=dims)
-PRcleaned = PRflattened.dropna("all_dims", how="all")
-PRcleaned = PRcleaned.where(PRcleaned !=0 , drop=True)
-PRcleaned.data = xr.where(np.isfinite(PRcleaned.data), PRcleaned.data, np.nan)
+sel_kwargs = {d: slice(*thresholds.get(d, (None, None))) for d in dims}
+results = results.sel(**sel_kwargs)
 
-PRaxis = PRcleaned.indexes["all_dims"].get_level_values(param)
-PRaverages = PRcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-PRSTD = PRcleaned.groupby(param).std(dim="all_dims", skipna=True)
-PRMedians = PRcleaned.groupby(param).median(dim="all_dims", skipna=True)
+fig, axs = plt.subplots(2, 3, figsize=(12, 12), constrained_layout=True)
 
-axs[1, 0].scatter(PRaxis, PRcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[1, 0].scatter(np.unique(PRaxis), PRaverages, color='red', label=f"Mean precision")
-axs[1, 0].errorbar(np.unique(PRaxis), PRaverages, yerr=PRSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of precision")
-axs[1, 0].scatter(np.unique(PRaxis), PRMedians, color='blue', label=f"Median precision")
-axs[1, 0].set_ylim(np.min(PRaverages-PRSTD)*1.2, np.max(PRaverages+PRSTD)*1.2)
-axs[1, 0].set_xlabel("Duty Cycle")
-axs[1, 0].set_ylabel("Precision")
-axs[1, 0].set_title(f"Spectral Kurtosis precision vs {param}")
+for ax, (metric, ylabel) in zip(axs.flatten(), metrics):
+    flattened = results.sel(Metrics=metric).stack(all_dims=dims)
+    cleaned = flattened.dropna("all_dims", how="all")
+    cleaned = cleaned.where(cleaned != 0, drop=True)
+    cleaned.data = xr.where(np.isfinite(cleaned.data), cleaned.data, np.nan)
 
-ACflattened = results.sel(Metrics="accuracy").stack(all_dims=dims)
+    axis_vals = cleaned.indexes["all_dims"].get_level_values(param)
+    averages = cleaned.groupby(param).mean(dim="all_dims", skipna=True)
+    std = cleaned.groupby(param).std(dim="all_dims", skipna=True)
+    medians = cleaned.groupby(param).median(dim="all_dims", skipna=True)
 
-ACcleaned = ACflattened.dropna("all_dims", how="all")
-ACcleaned = ACcleaned.where(ACcleaned !=0 , drop=True)
-ACcleaned.data = xr.where(np.isfinite(ACcleaned.data), ACcleaned.data, np.nan)
+    print(f"Averages for {metric} grouped by {param}:")
+    print(averages)
+    print(f"Shape of the flattened data: {flattened.shape}")
 
-ACaxis = ACcleaned.indexes["all_dims"].get_level_values(param)
-ACaverages = ACcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-ACSTD = ACcleaned.groupby(param).std(dim="all_dims", skipna=True)
-ACMedians = ACcleaned.groupby(param).median(dim="all_dims", skipna=True)
+    ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
+    ax.scatter(np.unique(axis_vals), averages, color='red', label=f"Mean {metric}") 
+    ax.errorbar(np.unique(axis_vals), averages, yerr=std, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {metric}")
+    ax.scatter(np.unique(axis_vals), medians, color='blue', label=f"Median {metric}")
+    ax.set_ylim(np.nanmin(averages - std) * 1.2, np.nanmax(averages + std) * 1.2)
+    ax.set_xlabel(param)
+    ax.set_ylabel(ylabel)
+    ax.legend(loc='upper right')
+    ax.set_title(f"{RFIMit} and {SigGen} {metric} vs {param}")
 
-axs[1, 1].scatter(ACaxis, ACcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[1, 1].scatter(np.unique(ACaxis), ACaverages, color='red', label=f"Mean accuracy")
-axs[1, 1].errorbar(np.unique(ACaxis), ACaverages, yerr=ACSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of accuracy")
-axs[1, 1].scatter(np.unique(ACaxis), ACMedians, color='blue', label=f"Median accuracy")
-axs[1, 1].set_ylim(np.min(ACaverages-ACSTD)*1.2, np.max(ACaverages+ACSTD)*1.2)
-axs[1, 1].set_xlabel("Duty Cycle")
-axs[1, 1].set_ylabel("Accuracy")
-axs[1, 1].set_title(f"Spectral Kurtosis accuracy vs {param}")
+plt.show()
 
-plt.legend()
-plt.close("all")
-CornerDS = results.sel(Metrics="accuracy").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
-DSTP = results.sel(Metrics="TP").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
-DSFP = results.sel(Metrics="FP").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
-DSPR = results.sel(Metrics="precision").stack(all_dims=["SymbolRate", "FC", "FS", "Count", "SNR", "DC"])
+
+# plt.close("all")
+CornerDS = results.sel(Metrics="accuracy").stack(all_dims=["SymbolRate", "FC", "FS", "M", "n", "SNR", "DC"])
+DSTP = results.sel(Metrics="TP").stack(all_dims=["SymbolRate", "FC", "FS", "M", "n", "SNR", "DC"])
+DSFP = results.sel(Metrics="FP").stack(all_dims=["SymbolRate", "FC", "FS", "M", "n", "SNR", "DC"])
+DSPR = results.sel(Metrics="precision").stack(all_dims=["SymbolRate", "FC", "FS", "M", "n", "SNR", "DC"])
 print (f"CornerDS shape: {CornerDS.shape}")
 print (f'CornerDS dim and coords: {CornerDS.dims}, {CornerDS.coords}')
 dfacc= CornerDS.to_dataframe(name="accuracy").dropna()
@@ -131,7 +94,7 @@ df['precision'] = dfPR['precision']
 df.to_csv("bpsk_data.csv", index=False)
 df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
-df = df[['SymbolRate', 'FC', 'FS', 'Count', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision']]
+df = df[['SymbolRate', 'FC', 'FS', 'M', 'n', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision']]
 
 print (f"DataFrame shape: {df.shape}")
 print (f"DataFrame head:\n{df}")
