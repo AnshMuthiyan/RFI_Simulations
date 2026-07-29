@@ -1,3 +1,5 @@
+import json
+import traceback
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
@@ -5,290 +7,113 @@ import scipy as sp
 import scipy.stats as stats
 import warnings as warn
 import pandas as pd
-import corner 
+import corner
 import xarray as xr
 import torch
 import flask
 import mpld3
+#For SK
+# RFIMit = "SK"
+# SigGen = "BPSK"
+# dims = ["SymbolRate", "FC", "FS", "M", "SNR", "DC"]
 
-unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_SK_combined.nc')
-def makeDaPlots(unfiltered_results, param="SymbolRate", dims=["SymbolRate", "FC", "FS", "M", "SNR", "DC"], SymRt_thersholds=(None,None), FC_thersholds=(None,None), FS_thersholds=(None,None), M_thersholds=(None,None), SNR_thersholds=(None,None), DC_thersholds=(None,None)):
-    #remove all parameters combinations with FP > 0.05
-    fp_thereshold = 0.05
-    fp = unfiltered_results.sel(Metrics="FP") <= fp_thereshold
-    results = unfiltered_results.where(fp.expand_dims(Metrics = unfiltered_results.coords['Metrics']), drop=True)
+#For msSK
+# RFIMit = "msSK"
+# SigGen = "BPSK"
+# dims = ["SymbolRate", "FC", "FS", "M", 'n', "SNR", "DC"]
 
-    #filter other parameters
-    results = results.sel(SymbolRate=slice(SymRt_thersholds[0],SymRt_thersholds[1]), FC=slice(FC_thersholds[0],FC_thersholds[1]), FS=slice(FS_thersholds[0],FS_thersholds[1]), M=slice(M_thersholds[0],M_thersholds[1]), SNR=slice(SNR_thersholds[0],SNR_thersholds[1]), DC=slice(DC_thersholds[0],DC_thersholds[1]))
-    
+# #For ConvRFI
+# RFIMit = "ConvRFI"
+# SigGen = "BPSK"
+# dims = ["SymbolRate", "FC", "FS", "AggressionFactor1", "AggressionFactor2", "AggressionFactor3", "AggressionFactor4", "Bins", "SNR", "DC"]
 
-    # met = "precision"
-    param = "param"
-    dims = dims
+# #For AOFlagger
+RFIMit = "AOFlagger"
+SigGen = "BPSK" 
+dims = ["SymbolRate", "FC", "FS", "Count", "SNR", "DC"]
 
-    TPflattened = results.sel(Metrics="TP").stack(all_dims=dims)
-    TPcleaned = TPflattened.dropna("all_dims", how="all")
-    TPcleaned = TPcleaned.where(TPcleaned !=0 , drop=True)
-    TPcleaned.data = xr.where(np.isfinite(TPcleaned.data), TPcleaned.data, np.nan)
+unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_AOFlagger_combined.nc')
 
-    TPaxis = TPcleaned.indexes["all_dims"].get_level_values(param)
-    TPaverages = TPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-    TPSTD = TPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-    TPmedians = TPcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-    print(f"Averages for TP grouped by {param}:")
-    print(TPaverages)
-    print(f'Shape of the flattened data: {TPflattened.shape}')
-    fig, axs = plt.subplots(2, 2, figsize=(12, 12), constrained_layout=True)
-    axs[0, 0].scatter(TPaxis, TPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-    axs[0, 0].scatter(np.unique(TPaxis), TPaverages, color='red', label=f"Mean TP")
-    axs[0, 0].errorbar(np.unique(TPaxis), TPaverages, yerr=TPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {met}")
-    axs[0, 0].scatter(np.unique(TPaxis), TPmedians, color='blue', label=f"Median TP")
-    axs[0, 0].set_ylim(np.min(TPaverages-TPSTD)*1.2, np.max(TPaverages+TPSTD)*1.2)
-    axs[0, 0].set_xlabel("Duty Cycle")
-    axs[0, 0].set_ylabel("True Positive Rate")
-    axs[0, 0].set_title(f"Spectral Kurtosis TP vs {param}")
+default_FP_thers = 0.05
+metrics = [
+    ("TP", "True Positive Rate"),
+    ("FP", "False Positive Rate"),
+    ("precision", "Precision"),
+    ("accuracy", "Accuracy"),
+    ("time", "Execution Time (s)"),
+]
 
 
-    FPflattened = results.sel(Metrics="FP").stack(all_dims=dims)
-    FPcleaned = FPflattened.dropna("all_dims", how="all")
-    FPcleaned = FPcleaned.where(FPcleaned !=0 , drop=True)
-    FPcleaned.data = xr.where(np.isfinite(FPcleaned.data), FPcleaned.data, np.nan)
 
-    FPaxis = FPcleaned.indexes["all_dims"].get_level_values(param)
-    FPaverages = FPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-    FPSTD = FPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-    FPMedians = FPcleaned.groupby(param).median(dim="all_dims", skipna=True)
+def makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds=None, fp_threshold=default_FP_thers):
+    if param not in dims:
+        raise ValueError(f"'{param}' is not one of the available parameters: {dims}")
 
-    axs[0, 1].scatter(FPaxis, FPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-    axs[0, 1].scatter(np.unique(FPaxis), FPaverages, color='red', label=f"Mean FP")
-    axs[0, 1].errorbar(np.unique(FPaxis), FPaverages, yerr=FPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of FP")
-    axs[0, 1].scatter(np.unique(FPaxis), FPMedians, color='blue', label=f"Median FP")
-    axs[0, 1].set_ylim(np.min(FPaverages-FPSTD)*1.2, np.max(FPaverages+FPSTD)*1.2)
-    axs[0, 1].set_xlabel("Duty Cycle")
-    axs[0, 1].set_ylabel("False Positive Rate")
-    axs[0, 1].set_title(f"Spectral Kurtosis FP vs {param}")
+    thresholds = thresholds or {}
 
-    PRflattened = results.sel(Metrics="precision").stack(all_dims=dims)
-    PRcleaned = PRflattened.dropna("all_dims", how="all")
-    PRcleaned = PRcleaned.where(PRcleaned !=0 , drop=True)
-    PRcleaned.data = xr.where(np.isfinite(PRcleaned.data), PRcleaned.data, np.nan)
+    #make mask for FP thresholding
+    fp = unfiltered_results.sel(Metrics="FP") <= fp_threshold
+    #print percent of data points that pass the FP threshold
+    percent_pass = fp.sum().item() / fp.size * 100
+    print(f"Percent of data points that pass the FP threshold of {fp_threshold}: {percent_pass:.2f}%")
+    #apply that mask
+    results = unfiltered_results.where(fp.expand_dims(Metrics=unfiltered_results.coords['Metrics']), drop=True)
 
-    PRaxis = PRcleaned.indexes["all_dims"].get_level_values(param)
-    PRaverages = PRcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-    PRSTD = PRcleaned.groupby(param).std(dim="all_dims", skipna=True)
-    PRMedians = PRcleaned.groupby(param).median(dim="all_dims", skipna=True)
+    sel_kwargs = {d: slice(*thresholds.get(d, (None, None))) for d in dims}
+    results = results.sel(**sel_kwargs)
 
-    axs[1, 0].scatter(PRaxis, PRcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-    axs[1, 0].scatter(np.unique(PRaxis), PRaverages, color='red', label=f"Mean precision")
-    axs[1, 0].errorbar(np.unique(PRaxis), PRaverages, yerr=PRSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of precision")
-    axs[1, 0].scatter(np.unique(PRaxis), PRMedians, color='blue', label=f"Median precision")
-    axs[1, 0].set_ylim(np.min(PRaverages-PRSTD)*1.2, np.max(PRaverages+PRSTD)*1.2)
-    axs[1, 0].set_xlabel("Duty Cycle")
-    axs[1, 0].set_ylabel("Precision")
-    axs[1, 0].set_title(f"Spectral Kurtosis precision vs {param}")
+    fig, axs = plt.subplots(2, 3, figsize=(12, 12), constrained_layout=True)
 
-    ACflattened = results.sel(Metrics="accuracy").stack(all_dims=dims)
+    for ax, (metric, ylabel) in zip(axs.flatten(), metrics):
+        flattened = results.sel(Metrics=metric).stack(all_dims=dims)
+        cleaned = flattened.dropna("all_dims", how="all")
+        cleaned = cleaned.where(cleaned != 0, drop=True)
+        cleaned.data = xr.where(np.isfinite(cleaned.data), cleaned.data, np.nan)
 
-    ACcleaned = ACflattened.dropna("all_dims", how="all")
-    ACcleaned = ACcleaned.where(ACcleaned !=0 , drop=True)
-    ACcleaned.data = xr.where(np.isfinite(ACcleaned.data), ACcleaned.data, np.nan)
+        axis_vals = cleaned.indexes["all_dims"].get_level_values(param)
+        averages = cleaned.groupby(param).mean(dim="all_dims", skipna=True)
+        std = cleaned.groupby(param).std(dim="all_dims", skipna=True)
+        medians = cleaned.groupby(param).median(dim="all_dims", skipna=True)
 
-    ACaxis = ACcleaned.indexes["all_dims"].get_level_values(param)
-    ACaverages = ACcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-    ACSTD = ACcleaned.groupby(param).std(dim="all_dims", skipna=True)
-    ACMedians = ACcleaned.groupby(param).median(dim="all_dims", skipna=True)
+        print(f"Averages for {metric} grouped by {param}:")
+        print(averages)
+        print(f"Shape of the flattened data: {flattened.shape}")
 
-    axs[1, 1].scatter(ACaxis, ACcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-    axs[1, 1].scatter(np.unique(ACaxis), ACaverages, color='red', label=f"Mean accuracy")
-    axs[1, 1].errorbar(np.unique(ACaxis), ACaverages, yerr=ACSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of accuracy")
-    axs[1, 1].scatter(np.unique(ACaxis), ACMedians, color='blue', label=f"Median accuracy")
-    axs[1, 1].set_ylim(np.min(ACaverages-ACSTD)*1.2, np.max(ACaverages+ACSTD)*1.2)
-    axs[1, 1].set_xlabel("Duty Cycle")
-    axs[1, 1].set_ylabel("Accuracy")
-    axs[1, 1].set_title(f"Spectral Kurtosis accuracy vs {param}")
+        ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
+        ax.scatter(np.unique(axis_vals), averages, color='red', label=f"Mean {metric}")
+        ax.errorbar(np.unique(axis_vals), averages, yerr=std, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {metric}")
+        ax.scatter(np.unique(axis_vals), medians, color='blue', label=f"Median {metric}")
+        ax.set_ylim(np.nanmin(averages - std) * 1.2, np.nanmax(averages + std) * 1.2)
+        ax.set_xlabel(param)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{RFIMit} and {SigGen} {metric} vs {param}")
 
     plt.legend()
     html_plot = mpld3.fig_to_html(fig)
-    return  html_plot
+    plt.close(fig)
+    return html_plot
 
 
+PARAM_INPUTS_HTML = "".join(
+    f'''
+        <div class="param-row">
+            <span class="param-label">{d}</span>
+            <input type="text" id="{d}_min" placeholder="min">
+            <input type="text" id="{d}_max" placeholder="max">
+        </div>'''
+    for d in dims
+)
 
-#remove all parameters combinations with FP > 0.05
-fp_thereshold = 0.05
-fp = unfiltered_results.sel(Metrics="FP") <= fp_thereshold
-results = unfiltered_results.where(fp.expand_dims(Metrics = unfiltered_results.coords['Metrics']), drop=True)
+PARAM_OPTIONS_HTML = "".join(
+    f'<option value="{d}"{" selected" if d == "SymbolRate" else ""}>{d}</option>'
+    for d in dims
+)
 
-#filter other parameters
-SymbolRate_thersholds = (300,0)
-results = results.sel(SymbolRate=slice(2,150), FC=slice(None, None), FS=slice(None, None), M=slice(None, None), SNR=slice(None, None), DC=slice(None, None))
-
-met = "precision"
-param = "SymbolRate"
-dims = ["SymbolRate", "FC", "FS", "M", "SNR", "DC"]
-
-TPflattened = results.sel(Metrics="TP").stack(all_dims=dims)
-TPcleaned = TPflattened.dropna("all_dims", how="all")
-TPcleaned = TPcleaned.where(TPcleaned !=0 , drop=True)
-TPcleaned.data = xr.where(np.isfinite(TPcleaned.data), TPcleaned.data, np.nan)
-
-TPaxis = TPcleaned.indexes["all_dims"].get_level_values(param)
-TPaverages = TPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-TPSTD = TPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-TPmedians = TPcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-print(f"Averages for TP grouped by {param}:")
-print(TPaverages)
-print(f'Shape of the flattened data: {TPflattened.shape}')
-fig, axs = plt.subplots(2, 2, figsize=(12, 12), constrained_layout=True)
-axs[0, 0].scatter(TPaxis, TPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[0, 0].scatter(np.unique(TPaxis), TPaverages, color='red', label=f"Mean TP")
-axs[0, 0].errorbar(np.unique(TPaxis), TPaverages, yerr=TPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {met}")
-axs[0, 0].scatter(np.unique(TPaxis), TPmedians, color='blue', label=f"Median TP")
-axs[0, 0].set_ylim(np.min(TPaverages-TPSTD)*1.2, np.max(TPaverages+TPSTD)*1.2)
-axs[0, 0].set_xlabel("Duty Cycle")
-axs[0, 0].set_ylabel("True Positive Rate")
-axs[0, 0].set_title(f"Spectral Kurtosis TP vs {param}")
-
-
-FPflattened = results.sel(Metrics="FP").stack(all_dims=dims)
-FPcleaned = FPflattened.dropna("all_dims", how="all")
-FPcleaned = FPcleaned.where(FPcleaned !=0 , drop=True)
-FPcleaned.data = xr.where(np.isfinite(FPcleaned.data), FPcleaned.data, np.nan)
-
-FPaxis = FPcleaned.indexes["all_dims"].get_level_values(param)
-FPaverages = FPcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-FPSTD = FPcleaned.groupby(param).std(dim="all_dims", skipna=True)
-FPMedians = FPcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-axs[0, 1].scatter(FPaxis, FPcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[0, 1].scatter(np.unique(FPaxis), FPaverages, color='red', label=f"Mean FP")
-axs[0, 1].errorbar(np.unique(FPaxis), FPaverages, yerr=FPSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of FP")
-axs[0, 1].scatter(np.unique(FPaxis), FPMedians, color='blue', label=f"Median FP")
-axs[0, 1].set_ylim(np.min(FPaverages-FPSTD)*1.2, np.max(FPaverages+FPSTD)*1.2)
-axs[0, 1].set_xlabel("Duty Cycle")
-axs[0, 1].set_ylabel("False Positive Rate")
-axs[0, 1].set_title(f"Spectral Kurtosis FP vs {param}")
-
-PRflattened = results.sel(Metrics="precision").stack(all_dims=dims)
-PRcleaned = PRflattened.dropna("all_dims", how="all")
-PRcleaned = PRcleaned.where(PRcleaned !=0 , drop=True)
-PRcleaned.data = xr.where(np.isfinite(PRcleaned.data), PRcleaned.data, np.nan)
-
-PRaxis = PRcleaned.indexes["all_dims"].get_level_values(param)
-PRaverages = PRcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-PRSTD = PRcleaned.groupby(param).std(dim="all_dims", skipna=True)
-PRMedians = PRcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-axs[1, 0].scatter(PRaxis, PRcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[1, 0].scatter(np.unique(PRaxis), PRaverages, color='red', label=f"Mean precision")
-axs[1, 0].errorbar(np.unique(PRaxis), PRaverages, yerr=PRSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of precision")
-axs[1, 0].scatter(np.unique(PRaxis), PRMedians, color='blue', label=f"Median precision")
-axs[1, 0].set_ylim(np.min(PRaverages-PRSTD)*1.2, np.max(PRaverages+PRSTD)*1.2)
-axs[1, 0].set_xlabel("Duty Cycle")
-axs[1, 0].set_ylabel("Precision")
-axs[1, 0].set_title(f"Spectral Kurtosis precision vs {param}")
-
-ACflattened = results.sel(Metrics="accuracy").stack(all_dims=dims)
-
-ACcleaned = ACflattened.dropna("all_dims", how="all")
-ACcleaned = ACcleaned.where(ACcleaned !=0 , drop=True)
-ACcleaned.data = xr.where(np.isfinite(ACcleaned.data), ACcleaned.data, np.nan)
-
-ACaxis = ACcleaned.indexes["all_dims"].get_level_values(param)
-ACaverages = ACcleaned.groupby(param).mean(dim="all_dims", skipna=True)
-ACSTD = ACcleaned.groupby(param).std(dim="all_dims", skipna=True)
-ACMedians = ACcleaned.groupby(param).median(dim="all_dims", skipna=True)
-
-axs[1, 1].scatter(ACaxis, ACcleaned, alpha=0.1, s=0.7, label=f"{param} Values")
-axs[1, 1].scatter(np.unique(ACaxis), ACaverages, color='red', label=f"Mean accuracy")
-axs[1, 1].errorbar(np.unique(ACaxis), ACaverages, yerr=ACSTD, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of accuracy")
-axs[1, 1].scatter(np.unique(ACaxis), ACMedians, color='blue', label=f"Median accuracy")
-axs[1, 1].set_ylim(np.min(ACaverages-ACSTD)*1.2, np.max(ACaverages+ACSTD)*1.2)
-axs[1, 1].set_xlabel("Duty Cycle")
-axs[1, 1].set_ylabel("Accuracy")
-axs[1, 1].set_title(f"Spectral Kurtosis accuracy vs {param}")
-
-plt.legend()
-html_plot = mpld3.fig_to_html(fig)
-# plt.show()
-
-
-# plt.close("all")
-# CornerDS = results.sel(Metrics="accuracy").stack(all_dims=dims)
-# DSTP = results.sel(Metrics="TP").stack(all_dims=dims)
-# DSFP = results.sel(Metrics="FP").stack(all_dims=dims)
-# DSPR = results.sel(Metrics="precision").stack(all_dims=dims)
-# print (f"CornerDS shape: {CornerDS.shape}")
-# print (f'CornerDS dim and coords: {CornerDS.dims}, {CornerDS.coords}')
-# dfacc= CornerDS.to_dataframe(name="accuracy").dropna()
-# dfTP = DSTP.to_dataframe(name="TP").dropna() 
-# dfFP = DSFP.to_dataframe(name="FP").dropna()
-# dfPR = DSPR.to_dataframe(name="precision").dropna()
-# df = dfacc.copy()
-# df['TP'] = dfTP['TP']
-# df['FP'] = dfFP['FP']
-# df['precision'] = dfPR['precision']
-
-# df.to_csv("bpsk_data.csv", index=False)
-# df = df.replace([np.inf, -np.inf], np.nan).dropna()
-
-# df = df[['SymbolRate', 'FC', 'FS', 'M', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision']]
-
-# print (f"DataFrame shape: {df.shape}")
-# print (f"DataFrame head:\n{df}")
-
-# # 2. Extract the data into an array of shape (samples, dimensions)
-# samples = df.values
-
-# # 3. Create the corner plot
-# figure = corner.corner(
-#     samples, 
-#     labels=['SymbolRate', 'FC', 'FS', 'M', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision' ],
-#     show_titles=True
-# )
-
-# plt.show()
-
-# #FILTERING DATA AND THEN CORNERING. Acc > 1
-
-# # df = df.dropna("all_dims", how="any")
-# df = df[df["accuracy"] > 1]
-
-# print(f"Filtered DataFrame shape: {df.shape}")
-
-# samples = df.values
-
-# # 3. Create the corner plot
-# figure = corner.corner(
-#     samples, 
-#     color = 'blue',
-#     labels=['SymbolRate', 'FC', 'FS', 'M', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision'],
-#     show_titles=True
-# )
-# plt.savefig("corner_plot_filtered.png")
-
-
-# plt.show()
-
-# df.to_csv("bpsk_accuracy_SK_accLargerThan1.csv", index=False)
-
-# #plot of SNR vs DC
-
-# param1 = "SNR"
-# param2 = "DC"
-# P1 = df[param1]
-# P2 = df[param2]
-
-# # plt.hexbin(P1, P2)
-# plt.scatter(P1, P2, alpha=0.006)
-# plt.xlabel(param1)
-# plt.ylabel(param2)
-# plt.title(f"{param1} vs {param2}")
-
-# plt.savefig(f"{param1}_{param2}_hexbin.png")
-# plt.show()
-
+try:
+    html_plot = makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds={"SymbolRate": (2, 150)}, fp_threshold=default_FP_thers)
+except Exception:
+    traceback.print_exc()
+    html_plot = "<div class='error'>Failed to generate the initial plot. Check the server console for details.</div>"
 
 app = flask.Flask(__name__)
 
@@ -297,50 +122,108 @@ html_template = """
 <html>
 <head>
     <title>Metric Plots</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        #filter-form { display: flex; flex-wrap: wrap; gap: 1em; align-items: flex-end; margin: 1em 0; }
+        .param-row { display: flex; flex-direction: column; }
+        .param-row input { width: 6em; }
+        #error-box { color: #b00020; white-space: pre-wrap; margin-top: 1em; }
+    </style>
 </head>
 <body>
     <h2>Metric Plots</h2>
-    <div>
-        {html_plot}
+    <div id="plot-container">
+        __HTML_PLOT__
     </div>
-    <div>
-        <input type="text" id="paramInput" placeholder="SymbolRate_max">
-        <input type="text" id="paramInput2" placeholder="SymbolRate_min">
+
+    <div id="filter-form">
+        __PARAM_INPUTS__
+        <div class="param-row">
+            <span class="param-label">X-axis parameter</span>
+            <select id="xparam">__PARAM_OPTIONS__</select>
+        </div>
+        <div class="param-row">
+            <span class="param-label">FP threshold</span>
+            <input type="text" id="fp_threshold" value="__DEFAULT_FP_THRESHOLD__">
+        </div>
     </div>
     <button onclick="updatePlot()">Update Plot</button>
+    <div id="error-box"></div>
+
     <script>
+        const dims = __DIMS_JSON__;
+
         function updatePlot() {
-            const paramValue = document.getElementById('paramInput').value;
-            const paramValue2 = document.getElementById('paramInput2').value;
+            const params = new URLSearchParams();
+            dims.forEach(d => {
+                const minVal = document.getElementById(d + '_min').value;
+                const maxVal = document.getElementById(d + '_max').value;
+                if (minVal) params.append(d + '_min', minVal);
+                if (maxVal) params.append(d + '_max', maxVal);
+            });
+            params.append('xparam', document.getElementById('xparam').value);
+            const fpThreshold = document.getElementById('fp_threshold').value;
+            if (fpThreshold) params.append('fp_threshold', fpThreshold);
 
-            fetch(`/update_plot?param=${paramValue}&param2=${paramValue2}`)
-                .then(response => response.text())
-                .then(html => {
-                    document.querySelector('div').innerHTML = html;
+            const errorBox = document.getElementById('error-box');
+            errorBox.textContent = '';
+
+            fetch(`/update_plot?${params.toString()}`)
+                .then(response => response.text().then(text => ({ ok: response.ok, text })))
+                .then(({ ok, text }) => {
+                    if (!ok) {
+                        errorBox.textContent = text;
+                        return;
+                    }
+                    const container = document.getElementById('plot-container');
+                    container.innerHTML = text;
+                    container.querySelectorAll('script').forEach(oldScript => {
+                        const newScript = document.createElement('script');
+                        newScript.textContent = oldScript.textContent;
+                        oldScript.replaceWith(newScript);
+                    });
                 })
-                .catch(error => console.error('Error updating plot:', error));
+                .catch(error => {
+                    errorBox.textContent = 'Request failed: ' + error;
+                    console.error('Error updating plot:', error);
+                });
         }
-
-
     </script>
-
 </body>
 </html>
 """
 
+
 @app.route('/')
 def index():
-    return html_template.format(html_plot=html_plot)
+    return (
+        html_template
+        .replace("__HTML_PLOT__", html_plot)
+        .replace("__PARAM_INPUTS__", PARAM_INPUTS_HTML)
+        .replace("__PARAM_OPTIONS__", PARAM_OPTIONS_HTML)
+        .replace("__DEFAULT_FP_THRESHOLD__", str(default_FP_thers))
+        .replace("__DIMS_JSON__", json.dumps(dims))
+    )
 
+
+@app.route('/update_plot')
 def update_plot():
-    param_value = flask.request.args.get('param', default=None, type=float)
-    param_value2 = flask.request.args.get('param2', default=None, type=float)
+    try:
+        thresholds = {
+            d: (
+                flask.request.args.get(f'{d}_min', default=None, type=float),
+                flask.request.args.get(f'{d}_max', default=None, type=float),
+            )
+            for d in dims
+        }
+        xparam = flask.request.args.get('xparam', default='SymbolRate', type=str)
+        fp_threshold = flask.request.args.get('fp_threshold', default=default_FP_thers, type=float)
 
-    # Call the makeDaPlots function with the new parameter values
-    html_plot_updated = makeDaPlots(unfiltered_results, SymRt_thersholds=(param_value2, param_value))
+        return makeDaPlots(unfiltered_results, param=xparam, dims=dims, thresholds=thresholds, fp_threshold=fp_threshold)
+    except Exception as e:
+        traceback.print_exc()
+        return f"Error updating plot: {e}", 500
 
-    return html_plot_updated
 
 if __name__ == '__main__':
     app.run(debug=True)
-
