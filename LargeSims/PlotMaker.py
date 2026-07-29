@@ -45,9 +45,13 @@ metrics = [
 
 
 
-def makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds=None, fp_threshold=default_FP_thers):
+def makeDaPlots(unfiltered_results, param="SymbolRate", color_param=None, dims=dims, thresholds=None, fp_threshold=default_FP_thers):
     if param not in dims:
         raise ValueError(f"'{param}' is not one of the available parameters: {dims}")
+    if color_param is not None and color_param not in dims:
+        raise ValueError(f"'{color_param}' is not one of the available parameters: {dims}")
+    if color_param == param:
+        color_param = None
 
     thresholds = thresholds or {}
 
@@ -79,7 +83,13 @@ def makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds=No
         print(averages)
         print(f"Shape of the flattened data: {flattened.shape}")
 
-        ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
+        if color_param is not None:
+            color_vals = cleaned.indexes["all_dims"].get_level_values(color_param)
+            scatter = ax.scatter(axis_vals, cleaned, c=color_vals, cmap='viridis', alpha=0.4, s=1.2, label=f"{param} Values")
+            cbar = fig.colorbar(scatter, ax=ax)
+            cbar.set_label(color_param)
+        else:
+            ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
         ax.scatter(np.unique(axis_vals), averages, color='red', label=f"Mean {metric}")
         ax.errorbar(np.unique(axis_vals), averages, yerr=std, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {metric}")
         ax.scatter(np.unique(axis_vals), medians, color='blue', label=f"Median {metric}")
@@ -106,6 +116,11 @@ PARAM_INPUTS_HTML = "".join(
 
 PARAM_OPTIONS_HTML = "".join(
     f'<option value="{d}"{" selected" if d == "SymbolRate" else ""}>{d}</option>'
+    for d in dims
+)
+
+COLOR_PARAM_OPTIONS_HTML = '<option value="">None</option>' + "".join(
+    f'<option value="{d}">{d}</option>'
     for d in dims
 )
 
@@ -143,6 +158,10 @@ html_template = """
             <select id="xparam">__PARAM_OPTIONS__</select>
         </div>
         <div class="param-row">
+            <span class="param-label">Color parameter</span>
+            <select id="colorparam">__COLOR_PARAM_OPTIONS__</select>
+        </div>
+        <div class="param-row">
             <span class="param-label">FP threshold</span>
             <input type="text" id="fp_threshold" value="__DEFAULT_FP_THRESHOLD__">
         </div>
@@ -162,6 +181,8 @@ html_template = """
                 if (maxVal) params.append(d + '_max', maxVal);
             });
             params.append('xparam', document.getElementById('xparam').value);
+            const colorParam = document.getElementById('colorparam').value;
+            if (colorParam) params.append('colorparam', colorParam);
             const fpThreshold = document.getElementById('fp_threshold').value;
             if (fpThreshold) params.append('fp_threshold', fpThreshold);
 
@@ -201,6 +222,7 @@ def index():
         .replace("__HTML_PLOT__", html_plot)
         .replace("__PARAM_INPUTS__", PARAM_INPUTS_HTML)
         .replace("__PARAM_OPTIONS__", PARAM_OPTIONS_HTML)
+        .replace("__COLOR_PARAM_OPTIONS__", COLOR_PARAM_OPTIONS_HTML)
         .replace("__DEFAULT_FP_THRESHOLD__", str(default_FP_thers))
         .replace("__DIMS_JSON__", json.dumps(dims))
     )
@@ -217,9 +239,10 @@ def update_plot():
             for d in dims
         }
         xparam = flask.request.args.get('xparam', default='SymbolRate', type=str)
+        colorparam = flask.request.args.get('colorparam', default=None, type=str) or None
         fp_threshold = flask.request.args.get('fp_threshold', default=default_FP_thers, type=float)
 
-        return makeDaPlots(unfiltered_results, param=xparam, dims=dims, thresholds=thresholds, fp_threshold=fp_threshold)
+        return makeDaPlots(unfiltered_results, param=xparam, color_param=colorparam, dims=dims, thresholds=thresholds, fp_threshold=fp_threshold)
     except Exception as e:
         traceback.print_exc()
         return f"Error updating plot: {e}", 500
