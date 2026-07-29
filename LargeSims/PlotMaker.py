@@ -29,10 +29,10 @@ import mpld3
 
 # #For AOFlagger
 RFIMit = "AOFlagger"
-SigGen = "BPSK" 
+SigGen = "QPSK" 
 dims = ["SymbolRate", "FC", "FS", "Count", "SNR", "DC"]
 
-unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/BPSK_AOFlagger_combined.nc')
+unfiltered_results = xr.open_dataarray('RFI_Simulations/jupyter/QPSK_AOFlagger_full.nc')
 
 default_FP_thers = 0.05
 metrics = [
@@ -97,6 +97,7 @@ def makeDaPlots(unfiltered_results, param="SymbolRate", color_param=None, dims=d
         ax.set_xlabel(param)
         ax.set_ylabel(ylabel)
         ax.set_title(f"{RFIMit} and {SigGen} {metric} vs {param}")
+        ax.legend(loc='upper right')
 
     plt.legend()
     html_plot = mpld3.fig_to_html(fig)
