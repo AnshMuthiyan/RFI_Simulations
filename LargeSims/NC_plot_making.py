@@ -24,13 +24,17 @@ metrics = [
     ("time", "Execution Time (s)"),
 ]
 
-
 param = "M"
+color_param = "n"
 thresholds = None
 fp_threshold = default_FP_thers
 # def makeDaPlots(unfiltered_results, param="SymbolRate", dims=dims, thresholds=None, fp_threshold=default_FP_thers):
 if param not in dims:
     raise ValueError(f"'{param}' is not one of the available parameters: {dims}")
+if color_param is not None and color_param not in dims:
+    raise ValueError(f"'{color_param}' is not one of the available parameters: {dims}")
+if color_param == param:
+    color_param = None
 
 thresholds = thresholds or {}
 
@@ -54,23 +58,32 @@ for ax, (metric, ylabel) in zip(axs.flatten(), metrics):
     cleaned.data = xr.where(np.isfinite(cleaned.data), cleaned.data, np.nan)
 
     axis_vals = cleaned.indexes["all_dims"].get_level_values(param)
+    color_vals = cleaned.indexes["all_dims"].get_level_values(color_param) if color_param else None
     averages = cleaned.groupby(param).mean(dim="all_dims", skipna=True)
     std = cleaned.groupby(param).std(dim="all_dims", skipna=True)
     medians = cleaned.groupby(param).median(dim="all_dims", skipna=True)
+    colmed = cleaned.groupby(color_param).median(dim="all_dims", skipna=True) if color_param else None
 
     print(f"Averages for {metric} grouped by {param}:")
     print(averages)
     print(f"Shape of the flattened data: {flattened.shape}")
 
-    ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
-    ax.scatter(np.unique(axis_vals), averages, color='red', label=f"Mean {metric}") 
+    if color_param is not None:
+        color_vals = cleaned.indexes["all_dims"].get_level_values(color_param)
+        scatter = ax.scatter(axis_vals, cleaned, c=color_vals, cmap='magma', alpha=0.4, s=1.2, label=f"{param} Values")
+        ax.scatter(np.unique(color_vals), colmed, color='green', label=f"Median {color_param}")  
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label(color_param)
+    else:
+        ax.scatter(axis_vals, cleaned, alpha=0.2, s=1.2, label=f"{param} Values")
+    ax.scatter(np.unique(axis_vals), averages, color='red', label=f"Mean {metric}")
     ax.errorbar(np.unique(axis_vals), averages, yerr=std, fmt='o', color='red', ecolor='gray', elinewidth=.6, capsize=3, label=f"STD of {metric}")
     ax.scatter(np.unique(axis_vals), medians, color='blue', label=f"Median {metric}")
     ax.set_ylim(np.nanmin(averages - std) * 1.2, np.nanmax(averages + std) * 1.2)
     ax.set_xlabel(param)
     ax.set_ylabel(ylabel)
-    ax.legend(loc='upper right')
     ax.set_title(f"{RFIMit} and {SigGen} {metric} vs {param}")
+    ax.legend(loc='upper right')
 
 plt.show()
 
@@ -105,6 +118,7 @@ samples = df.values
 # 3. Create the corner plot
 figure = corner.corner(
     samples, 
+    color = 'blue',
     labels=['SymbolRate', 'FC', 'FS', 'Count', 'SNR', 'DC', 'accuracy', 'TP', 'FP', 'precision' ],
     show_titles=True
 )
